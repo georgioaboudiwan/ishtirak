@@ -1,0 +1,6 @@
+{
+  "appId": "lb.ishtirak.app",
+  "appName": "Ishtirak",
+  "webDir": "docs",
+  "server": { "androidScheme": "https" }
+}

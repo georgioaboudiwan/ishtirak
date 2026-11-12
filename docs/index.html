@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://cpqtthvtljbhawhjllbz.supabase.co wss://cpqtthvtljbhawhjllbz.supabase.co; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#14161a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Ishtirak">
+<title>Ishtirak</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="bolt">⚡</span><span id="brand-name">Ishtirak</span></div>
+  <button id="lang-toggle" class="ghost small" type="button">EN</button>
+</header>
+<main id="app" class="container"></main>
+<nav id="tabs" class="tabs" hidden></nav>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<script src="vendor/supabase.js"></script>
+<script src="js/config.js"></script>
+<script src="js/i18n.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
