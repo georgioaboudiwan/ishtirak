@@ -77,6 +77,7 @@
     if (/invalid login/i.test(m)) return t('badLogin');
     if (/email not confirmed/i.test(m)) return t('notConfirmed');
     if (/rate limit|too many/i.test(m)) return t('rateLimit');
+    if (/sending .*email|smtp/i.test(m)) return t('emailFail');
     if (/password|user already/i.test(m)) return m;
     return t('error');
   }

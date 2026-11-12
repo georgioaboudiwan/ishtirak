@@ -49,7 +49,8 @@ window.I18N = {
     required: 'Fill in the required fields.', offline: 'You are offline.',
     badLogin: 'Wrong email or password. Use "Forgot password?" to set a new one.',
     notConfirmed: 'Confirm your email first. Check your inbox.',
-    rateLimit: 'Too many attempts. Wait a few minutes and try again.'
+    rateLimit: 'Too many attempts. Wait a few minutes and try again.',
+    emailFail: 'Could not send the email. Try again in a few minutes.'
   },
   ar: {
     app: 'اشتراك',
@@ -101,6 +102,7 @@ window.I18N = {
     required: 'عبّي الخانات المطلوبة.', offline: 'ما في إنترنت.',
     badLogin: 'البريد أو كلمة المرور غلط. استعمل "نسيت كلمة المرور؟" لتعيين وحدة جديدة.',
     notConfirmed: 'أكّد بريدك أولاً. تفقّد الإيميل.',
-    rateLimit: 'محاولات كتير. انطر كم دقيقة وجرّب مرة تانية.'
+    rateLimit: 'محاولات كتير. انطر كم دقيقة وجرّب مرة تانية.',
+    emailFail: 'ما قدرنا نبعت الإيميل. جرّب بعد كم دقيقة.'
   }
 };
