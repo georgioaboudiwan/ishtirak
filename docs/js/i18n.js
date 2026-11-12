@@ -50,7 +50,11 @@ window.I18N = {
     badLogin: 'Wrong email or password. Use "Forgot password?" to set a new one.',
     notConfirmed: 'Confirm your email first. Check your inbox.',
     rateLimit: 'Too many attempts. Wait a few minutes and try again.',
-    emailFail: 'Could not send the email. Try again in a few minutes.'
+    emailFail: 'Could not send the email. Try again in a few minutes.',
+    codeSent: 'We emailed you a code.', code: 'Code from the email', verify: 'Confirm', verifyEmail: 'Confirm your email',
+    codeHint: 'Enter the code we sent to {email}. Check Spam if you don\'t see it.', resendCode: 'Send a new code',
+    badCode: 'Wrong or expired code. Use the newest email or send a new code.',
+    linkExpired: 'That link was already used or expired. Request a new code.'
   },
   ar: {
     app: 'اشتراك',
@@ -103,6 +107,10 @@ window.I18N = {
     badLogin: 'البريد أو كلمة المرور غلط. استعمل "نسيت كلمة المرور؟" لتعيين وحدة جديدة.',
     notConfirmed: 'أكّد بريدك أولاً. تفقّد الإيميل.',
     rateLimit: 'محاولات كتير. انطر كم دقيقة وجرّب مرة تانية.',
-    emailFail: 'ما قدرنا نبعت الإيميل. جرّب بعد كم دقيقة.'
+    emailFail: 'ما قدرنا نبعت الإيميل. جرّب بعد كم دقيقة.',
+    codeSent: 'بعتنالك رمز على الإيميل.', code: 'الرمز من الإيميل', verify: 'تأكيد', verifyEmail: 'تأكيد البريد',
+    codeHint: 'أدخل الرمز يلي بعتناه على {email}. إذا ما لقيته تفقّد الـ Spam.', resendCode: 'ابعت رمز جديد',
+    badCode: 'الرمز غلط أو منتهي. استعمل آخر إيميل أو اطلب رمز جديد.',
+    linkExpired: 'الرابط مستعمل أو منتهي. اطلب رمز جديد.'
   }
 };

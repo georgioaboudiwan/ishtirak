@@ -74,6 +74,7 @@
     if (m.includes('overpayment')) return t('overpayment');
     if (m.includes('tariff_missing')) return t('tariffMissing');
     if (m.includes('invalid_code')) return t('invalidCode');
+    if (/expired|invalid.*(otp|token)|token.*invalid/i.test(m)) return t('badCode');
     if (/invalid login/i.test(m)) return t('badLogin');
     if (/email not confirmed/i.test(m)) return t('notConfirmed');
     if (/rate limit|too many/i.test(m)) return t('rateLimit');
@@ -226,14 +227,19 @@
         if (isReset) {
           const { error } = await sb.auth.resetPasswordForEmail(em, { redirectTo: appUrl() });
           if (error) throw error;
-          toast(t('resetSent'), 'good');
-          viewAuth('signin');
+          toast(t('codeSent'), 'good');
+          viewVerify(em, 'recovery');
         } else if (isUp) {
           const { data, error } = await sb.auth.signUp({ email: em, password: pw.value, options: { emailRedirectTo: appUrl() } });
           if (error) throw error;
-          if (!data.session) { toast(t('checkEmail'), 'good'); viewAuth('signin'); }
+          if (!data.session) { toast(t('codeSent'), 'good'); viewVerify(em, 'signup'); }
         } else {
           const { error } = await sb.auth.signInWithPassword({ email: em, password: pw.value });
+          if (error && /email not confirmed/i.test(error.message || '')) {
+            await sb.auth.resend({ type: 'signup', email: em });
+            toast(t('codeSent'), 'good');
+            return viewVerify(em, 'signup');
+          }
           if (error) throw error;
         }
       } catch (err) { fail(err); } finally { busy(btn, false); }
@@ -246,6 +252,49 @@
         h('button', { type: 'button', class: 'link', onclick: () => viewAuth(isUp || isReset ? 'signin' : 'signup') }, isUp || isReset ? t('haveAccount') : t('noAccount')),
         !isUp && !isReset ? h('button', { type: 'button', class: 'link', onclick: () => viewAuth('reset') }, t('forgot')) : null));
     render(h('section', { class: 'hero' }, h('div', { class: 'hero-bolt' }, '⚡'), h('h1', null, t('app'))), form);
+  }
+
+  function viewVerify(em, kind) {
+    $tabs.hidden = true;
+    const isRec = kind === 'recovery';
+    const code = input('code', { required: true, maxlength: 10, inputmode: 'numeric', autocomplete: 'one-time-code', class: 'code-input' });
+    const pw = isRec ? input('password', { type: 'password', required: true, minlength: 10, autocomplete: 'new-password' }) : null;
+    const btn = h('button', { type: 'submit', class: 'primary block' }, isRec ? t('save') : t('verify'));
+    const resend = h('button', { type: 'button', class: 'link', onclick: async () => {
+      busy(resend, true);
+      try {
+        const { error } = isRec
+          ? await sb.auth.resetPasswordForEmail(em, { redirectTo: appUrl() })
+          : await sb.auth.resend({ type: 'signup', email: em });
+        if (error) throw error;
+        toast(t('codeSent'), 'good');
+      } catch (err) { fail(err); } finally { busy(resend, false); }
+    } }, t('resendCode'));
+    render(h('form', { class: 'card stack', novalidate: true, onsubmit: async (e) => {
+      e.preventDefault();
+      const c = code.value.replace(/\D/g, '');
+      if (c.length < 6) return toast(t('badCode'), 'bad');
+      if (pw && pw.value.length < 10) return toast(t('pwHint'), 'bad');
+      busy(btn, true);
+      try {
+        if (isRec) state.recovery = true;
+        const { error } = await sb.auth.verifyOtp({ email: em, token: c, type: isRec ? 'recovery' : 'email' });
+        if (error) { state.recovery = false; throw error; }
+        if (isRec) {
+          const { error: upErr } = await sb.auth.updateUser({ password: pw.value });
+          if (upErr) throw upErr;
+          state.recovery = false;
+          toast(t('passwordUpdated'), 'good');
+          await boot();
+        }
+      } catch (err) { fail(err); } finally { busy(btn, false); }
+    } },
+      h('h2', null, isRec ? t('newPassword') : t('verifyEmail')),
+      h('p', { class: 'muted' }, t('codeHint', { email: em })),
+      field(t('code'), code),
+      pw ? field(t('newPassword'), pw, t('pwHint')) : null,
+      btn,
+      h('div', { class: 'row between' }, resend, h('button', { type: 'button', class: 'link', onclick: () => viewAuth('signin') }, t('back')))));
   }
 
   function viewRecovery() {
@@ -738,6 +787,13 @@
     route();
   }
 
+  function hashError() {
+    const hp = new URLSearchParams(location.hash.slice(1));
+    if (!hp.get('error')) return;
+    history.replaceState(null, '', location.pathname + location.search);
+    toast(t('linkExpired'), 'bad');
+  }
+
   async function boot() {
     const { data } = await sb.auth.getSession();
     state.user = data.session ? data.session.user : null;
@@ -761,4 +817,5 @@
   }
 
   applyLang();
+  hashError();
 })();
