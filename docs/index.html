@@ -5,10 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://cpqtthvtljbhawhjllbz.supabase.co wss://cpqtthvtljbhawhjllbz.supabase.co; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
-<meta name="theme-color" content="#14161a">
+<meta name="theme-color" content="#f3f1ea" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d0f13" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Ishtirak">
+<meta name="format-detection" content="telephone=no">
 <title>Ishtirak</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
@@ -16,16 +19,22 @@
 <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
-<header class="topbar">
-  <div class="brand"><span class="bolt">⚡</span><span id="brand-name">Ishtirak</span></div>
-  <button id="lang-toggle" class="ghost small" type="button">EN</button>
+<aside id="side">
+  <div class="brand"><svg class="ic bolt" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg><span class="brand-name">Ishtirak</span></div>
+  <nav id="side-nav"></nav>
+  <button class="lang-toggle btn ghost small" type="button">English</button>
+</aside>
+<header id="top">
+  <div class="brand"><svg class="ic bolt" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg><span class="brand-name">Ishtirak</span></div>
+  <button class="lang-toggle btn ghost small" type="button">English</button>
 </header>
-<main id="app" class="container"></main>
-<nav id="tabs" class="tabs" hidden></nav>
+<main id="app"></main>
+<nav id="dock" aria-label="Main"></nav>
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 <script src="vendor/supabase.js"></script>
 <script src="js/config.js"></script>
 <script src="js/i18n.js"></script>
+<script src="js/vault.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

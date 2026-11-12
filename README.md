@@ -1,6 +1,6 @@
 # Ishtirak — اشتراك
 
-Generator subscription billing for Lebanon. Owners manage subscribers, meter readings, monthly tariff, bills and payments. Subscribers link with an invite code and see their bills and notices.
+Generator subscription billing for Lebanon. Owners manage subscribers, meter readings, monthly prices, bills and payments. Subscribers open a personal link (no email or password) and see their bills and notices.
 
 Static web app (`docs/`) + Supabase. The same `docs/` folder is wrapped by Capacitor for Android/iOS.
 
@@ -16,7 +16,7 @@ Dashboard → project **Ishtirak** → Authentication:
 
 - URL Configuration → Site URL: `https://<user>.github.io/ishtirak/`
 - Redirect URLs: add the same URL, plus `http://localhost:8080/` for local testing and `https://localhost/` for the Capacitor app
-- Sign In / Providers → Email: keep "Confirm email" on, minimum password length 10
+- Sign In / Providers: "Allow anonymous sign-ins" on, "Confirm email" on, minimum password length 10
 - Attack Protection: turn on leaked password protection (Pro plan) and CAPTCHA if you open sign-ups publicly
 
 ## 3. Local run
@@ -44,10 +44,24 @@ After any change in `docs/`, run `npx cap sync` again.
 - "Generate bills" can be re-run any time; bills that already have a payment are locked.
 - Payments can't exceed what's left on a bill.
 
+## Subscribers without email
+
+- The owner adds a subscriber with a mandatory phone number and sends their personal link by WhatsApp or SMS.
+- The link signs the phone in without an account (Supabase anonymous sign-in) and works on up to 5 devices. "New link" cuts off all of them.
+- One shared code/link can be sent to everyone: each person enters their details and waits for the owner to accept them.
+
+## Encryption
+
+- Names, phone numbers, building, floor, meter number, the owner's private label and payment notes are encrypted in the browser (AES-256-GCM) before they reach the database.
+- Each subscriber has their own key. It travels in the link fragment (never sent to a server) and is stored wrapped with the owner's key.
+- The owner's key is wrapped with their password (PBKDF2, 310k rounds) and with a recovery code shown once. Losing both makes the encrypted details unreadable.
+- Join requests are sealed to the owner's public key (ECDH P-256).
+- Amps, readings, prices and bill amounts stay as plain numbers so the database can compute and protect bills. Notices and the generator's name are not encrypted.
+
 ## Security
 
-- Row Level Security on every table: owners only see their business, subscribers only their own subscription, bills and payments.
-- Bill amounts are computed in the database (`generate_bills`) and can't be edited from the app.
-- Column-level grants: subscribers can't be relinked by the owner, `user_id` and `invite_code` are only set by database functions.
-- Invite codes are single-use and rotate on claim; "Reset app access" unlinks a phone and issues a new code.
+- Row Level Security on every table: owners only see their business, subscribers only their own bills and payments.
+- Bill amounts are computed in the database (`generate_bills`) and can't be edited from the app. Payments can't exceed what's left.
+- Subscribers never read the subscribers table directly; they get their own row through a function that leaves out the owner's private label and the link token.
+- Anonymous sessions can't create a generator.
 - Strict Content-Security-Policy, no third-party scripts, all user text rendered with `textContent`.
