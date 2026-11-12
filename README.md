@@ -60,8 +60,11 @@ After any change in `docs/`, run `npx cap sync` again.
 
 ## Security
 
-- Row Level Security on every table: owners only see their business, subscribers only their own bills and payments.
-- Bill amounts are computed in the database (`generate_bills`) and can't be edited from the app. Payments can't exceed what's left.
-- Subscribers never read the subscribers table directly; they get their own row through a function that leaves out the owner's private label and the link token.
-- Anonymous sessions can't create a generator.
+- Names, phone numbers, addresses, meter numbers, the owner's private labels and payment notes are encrypted in the browser (AES-GCM) before they reach the database. Amounts, amps and readings stay readable by the database so it can compute and guard the bills.
+- The owner's key is wrapped with a key derived from the password (PBKDF2) and with a recovery code shown once at setup.
+- Each subscriber has their own key. It travels only in the fragment of their personal link, which is never sent to the server.
+- People who join with the shared code send their key to the owner sealed with the owner's public key (ECDH P-256).
+- Row Level Security on every table. Subscribers read their data only through database functions; they never see the owner's private label.
+- Bill amounts are computed in the database and can't be edited from the app. Payments can't exceed what's left.
+- Subscribers sign in anonymously per device; a link works on up to 5 devices and the owner can replace it at any time.
 - Strict Content-Security-Policy, no third-party scripts, all user text rendered with `textContent`.
