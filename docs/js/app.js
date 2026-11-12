@@ -3,7 +3,7 @@
 
   const cfg = window.APP_CONFIG;
   const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce' }
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'implicit' }
   });
 
   const $app = document.getElementById('app');
@@ -74,7 +74,10 @@
     if (m.includes('overpayment')) return t('overpayment');
     if (m.includes('tariff_missing')) return t('tariffMissing');
     if (m.includes('invalid_code')) return t('invalidCode');
-    if (/invalid login|email not confirmed|password|user already/i.test(m)) return m;
+    if (/invalid login/i.test(m)) return t('badLogin');
+    if (/email not confirmed/i.test(m)) return t('notConfirmed');
+    if (/rate limit|too many/i.test(m)) return t('rateLimit');
+    if (/password|user already/i.test(m)) return m;
     return t('error');
   }
 

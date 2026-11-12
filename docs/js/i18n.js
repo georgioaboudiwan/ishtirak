@@ -46,7 +46,10 @@ window.I18N = {
     addSubscription: 'Add another subscription', provider: 'Provider', noSubscriptionBills: 'No bills yet.',
     overpayment: 'Amount is more than what is left on the bill.',
     error: 'Something went wrong. Try again.', invalidCode: 'That code is not valid or was already used.',
-    required: 'Fill in the required fields.', offline: 'You are offline.'
+    required: 'Fill in the required fields.', offline: 'You are offline.',
+    badLogin: 'Wrong email or password. Use "Forgot password?" to set a new one.',
+    notConfirmed: 'Confirm your email first. Check your inbox.',
+    rateLimit: 'Too many attempts. Wait a few minutes and try again.'
   },
   ar: {
     app: 'اشتراك',
@@ -95,6 +98,9 @@ window.I18N = {
     addSubscription: 'إضافة اشتراك آخر', provider: 'صاحب المولّد', noSubscriptionBills: 'ما في فواتير بعد.',
     overpayment: 'المبلغ أكبر من الباقي على الفاتورة.',
     error: 'صار في خطأ. جرّب مرة تانية.', invalidCode: 'الرمز غير صحيح أو مستعمل.',
-    required: 'عبّي الخانات المطلوبة.', offline: 'ما في إنترنت.'
+    required: 'عبّي الخانات المطلوبة.', offline: 'ما في إنترنت.',
+    badLogin: 'البريد أو كلمة المرور غلط. استعمل "نسيت كلمة المرور؟" لتعيين وحدة جديدة.',
+    notConfirmed: 'أكّد بريدك أولاً. تفقّد الإيميل.',
+    rateLimit: 'محاولات كتير. انطر كم دقيقة وجرّب مرة تانية.'
   }
 };
