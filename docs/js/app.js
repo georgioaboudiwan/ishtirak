@@ -107,7 +107,8 @@
     chat: 'M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z',
     lock: 'M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3',
     globe: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18',
-    plus: 'M12 5v14M5 12h14'
+    plus: 'M12 5v14M5 12h14',
+    camera: 'M4 8h3l2-3h6l2 3h3v11H4zM12 17a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z'
   };
 
   function icon(name, cls) {
@@ -353,6 +354,7 @@
     state.lang = state.lang === 'ar' ? 'en' : 'ar';
     store.set('lang', state.lang);
     route();
+    refreshPush();
   }
 
   $langs.forEach((b) => b.addEventListener('click', switchLang));
@@ -516,6 +518,7 @@
       r.name = ((await V.dec(bk, r.name_enc)) || {}).name || '';
       state.roles.push(r);
     }
+    if (store.get('push') && store.get('push') !== uid) refreshPush();
     const ok = { owner: !!state.ownBusiness, collector: state.roles.length > 0, subscriber: state.subs.length > 0 };
     if (!state.mode || !ok[state.mode]) {
       state.mode = ok.owner ? 'owner' : ok.collector ? 'collector' : ok.subscriber ? 'subscriber' : null;
@@ -1152,6 +1155,7 @@
       segmented('method', [['cash', t('cash')], ['whish', 'Whish'], ['omt', 'OMT'], ['other', t('other')]], 'cash'),
       field(t('note'), note), save) : null;
     const line = (label, value, cls) => h('div', { class: 'row between' }, h('span', null, label), h('strong', { class: cls || '' }, value));
+    const photoSlot = h('div', { class: 'photo-slot' });
     close = sheet(p ? p.title : t('bill'), h('div', { class: 'stack' },
       h('div', { class: 'summary' },
         h('small', { class: 'muted' }, monthLabel(b.month)), h('div', null, billDetail(b)),
@@ -1161,7 +1165,13 @@
         old > 0 ? line(t('totalOwed'), money(old + rem), 'amount') : null),
       pays.length ? h('div', { class: 'stack tight' }, h('small', { class: 'muted' }, t('payments')), pays) : null,
       form,
+      photoSlot,
       p && p.info.phone ? h('button', { type: 'button', class: 'btn wa block', onclick: () => { openExternal(waLink(p.info.phone, billMessage(b, p))); markSent(b.id); } }, icon('chat'), t('sendBill')) : null));
+    if (b.billing_type === 'metered' && p && p.sk && state.mode === 'owner') {
+      sb.from('readings').select('photo').eq('subscriber_id', b.subscriber_id).eq('month', b.month).maybeSingle().then(({ data }) => {
+        if (data && data.photo) photoSlot.replaceChildren(h('button', { type: 'button', class: 'btn ghost block', onclick: () => showPhoto(p.sk, biz.id, p.id, b.month, p.title) }, icon('camera'), t('meterPhoto')));
+      });
+    }
   }
 
   function receiptNo(pay) { return String(pay.id).replace(/-/g, '').slice(0, 8).toUpperCase(); }
@@ -1274,7 +1284,9 @@
       !people.length ? h('div', { class: 'card stack center-card' },
         h('h2', null, t('startTitle')), h('p', { class: 'muted' }, t('startBody')),
         h('button', { type: 'button', class: 'btn primary block', onclick: () => personForm(null, () => go('people')) }, icon('plus'), t('addSubscriber')),
+        h('button', { type: 'button', class: 'btn ghost block', onclick: importSheet }, t('importTitle')),
         h('button', { type: 'button', class: 'btn ghost block', onclick: () => go('invite') }, icon('send'), t('inviteAll'))) : null,
+      people.length ? pushCard(t('pushAskOwner')) : null,
       h('div', { class: 'cols' },
         h('div', { class: 'stack' },
           h('section', { class: 'hero-card' },
@@ -1408,7 +1420,9 @@
     }).catch(fail), 250); });
     const again = () => viewPeople();
     render(
-      head(`${t('tabPeople')} (${people.filter((p) => p.status !== 'pending').length})`, h('button', { type: 'button', class: 'btn primary small desk-only', onclick: () => personForm(null, again) }, icon('plus'), t('add'))),
+      head(`${t('tabPeople')} (${people.filter((p) => p.status !== 'pending').length})`, h('div', { class: 'row' },
+        h('button', { type: 'button', class: 'btn ghost small', onclick: importSheet }, t('import')),
+        h('button', { type: 'button', class: 'btn primary small desk-only', onclick: () => personForm(null, again) }, icon('plus'), t('add')))),
       people.length ? search : null,
       list.length ? h('div', { class: 'card flush grid-list' }, list.map((p) => h('div', { class: `item ${p.active ? '' : 'dim'}`, role: 'button', tabindex: '0', onclick: () => personSheet(p) },
         avatar(p.title),
@@ -1454,6 +1468,11 @@
         } }, t('resetAccess')),
         h('button', { type: 'button', class: 'btn danger ghost', onclick: async () => {
           if (!(await confirmBox(t('deletePerson', { name: p.title })))) return;
+          try {
+            const dir = `${state.business.id}/${p.id}`;
+            const ls = await sb.storage.from('meters').list(dir, { limit: 1000 });
+            if (ls.data && ls.data.length) await sb.storage.from('meters').remove(ls.data.map((f) => `${dir}/${f.name}`));
+          } catch (e) { console.warn(e); }
           const { error } = await sb.from('subscribers').delete().eq('id', p.id);
           if (error) return fail(error);
           close(); viewPeople();
@@ -1537,20 +1556,26 @@
     const ex = await sb.from('readings').select('id, subscriber_id, value').eq('month', month).in('subscriber_id', ids);
     if (ex.error) throw ex.error;
     const have = new Map(ex.data.map((r) => [r.subscriber_id, r]));
+    const photos = state.business ? pendingPhotos(month) : [];
     const inserts = [];
     let n = 0;
     for (const id of ids) {
       const c = have.get(id);
-      if (c && Number(c.value) === values[id]) continue;
+      if (c && Number(c.value) === values[id] && !photos.includes(id)) continue;
+      const extra = photos.includes(id) ? { photo: true } : {};
       if (c) {
-        const { error } = await sb.from('readings').update({ value: values[id] }).eq('id', c.id);
+        const { error } = await sb.from('readings').update(Object.assign({ value: values[id] }, extra)).eq('id', c.id);
         if (error) throw error;
-      } else inserts.push({ subscriber_id: id, month, value: values[id] });
+      } else inserts.push(Object.assign({ subscriber_id: id, month, value: values[id] }, extra));
       n++;
     }
     if (inserts.length) {
       const { error } = await sb.from('readings').insert(inserts);
       if (error) throw error;
+    }
+    if (photos.length) {
+      const left = photos.filter((id) => !(id in values));
+      if (left.length) store.set(photoKey(month), JSON.stringify(left)); else store.del(photoKey(month));
     }
     return n;
   }
@@ -1588,7 +1613,7 @@
       const people = (await loadPeople()).filter((p) => p.active && p.status !== 'pending' && p.billing_type === 'metered');
       people.sort((a, b) => (a.info.building || '').localeCompare(b.info.building || '') || a.title.localeCompare(b.title));
       const ids = people.map((p) => p.id);
-      const rd = ids.length ? await sb.from('readings').select('id, subscriber_id, month, value').in('subscriber_id', ids).lte('month', m).order('month', { ascending: false }) : { data: [] };
+      const rd = ids.length ? await sb.from('readings').select('id, subscriber_id, month, value, photo').in('subscriber_id', ids).lte('month', m).order('month', { ascending: false }) : { data: [] };
       if (rd.error) throw rd.error;
       const cur = new Map(); const prev = new Map();
       for (const r of rd.data) {
@@ -1598,7 +1623,9 @@
       rows = people.map((s) => ({
         id: s.id, title: s.title, sub: [s.info.building, s.info.meter && `#${s.info.meter}`].filter(Boolean).join(sep()),
         prev: prev.has(s.id) ? Number(prev.get(s.id)) : Number(s.initial_reading),
-        cur: cur.has(s.id) ? Number(cur.get(s.id).value) : null
+        cur: cur.has(s.id) ? Number(cur.get(s.id).value) : null,
+        rid: cur.has(s.id) ? cur.get(s.id).id : null,
+        photo: cur.has(s.id) ? !!cur.get(s.id).photo : false
       }));
       store.set(cacheKey, await V.enc(state.bk, rows));
     } catch (e) {
@@ -1624,8 +1651,12 @@
       });
       upd();
       inputs.push({ r, inp });
+      const hasPhoto = r.photo || pendingPhotos(m).includes(r.id);
+      const cam = offline ? null : h('button', { type: 'button', class: `cam ${hasPhoto ? 'has' : ''}`, 'aria-label': hasPhoto ? t('photoRetake') : t('photoTake'), title: t('meterPhoto') }, icon('camera'));
+      if (cam) cam.addEventListener('click', () => uploadMeterPhoto(r, m, cam));
       return h('div', { class: 'item static' }, avatar(r.title),
         h('div', { class: 'grow' }, h('strong', null, r.title), h('small', { class: 'muted' }, r.sub)),
+        cam,
         h('div', { class: 'reading' }, inp, diff));
     });
     const save = h('button', { type: 'button', class: 'btn primary block sticky', onclick: async () => {
@@ -1959,9 +1990,14 @@
     const active = state.subs.filter((s) => s.status === 'active');
     const waiting = state.subs.filter((s) => s.status === 'pending');
     const ids = active.map((s) => s.id);
-    const res = ids.length ? await sb.from('bills').select('*, payments(amount, method, paid_at, lbp_amount)').in('subscriber_id', ids).order('month', { ascending: false }).limit(60) : { data: [] };
+    const [res, ph] = ids.length ? await Promise.all([
+      sb.from('bills').select('*, payments(amount, method, paid_at, lbp_amount)').in('subscriber_id', ids).order('month', { ascending: false }).limit(60),
+      sb.from('readings').select('subscriber_id, month').in('subscriber_id', ids).eq('photo', true).order('month', { ascending: false }).limit(60)
+    ]) : [{ data: [] }, { data: [] }];
     if (res.error) throw res.error;
+    const photos = new Set((ph.data || []).map((r) => `${r.subscriber_id}:${r.month}`));
     render(head(t('tabBills'), h('button', { type: 'button', class: 'icon-btn', onclick: refresh, 'aria-label': t('refresh') }, '↻')),
+      active.length ? pushCard(t('pushAskSub')) : null,
       waiting.map((s) => h('section', { class: 'card stack center-card' },
         h('div', { class: 'logo small' }, icon('bolt')),
         h('h2', null, t('waitingTitle')), h('p', { class: 'muted' }, t('waitingBody', { biz: s.business.name })))),
@@ -1989,7 +2025,8 @@
                 b.billing_type === 'metered' ? h('small', null, t('readingLine', { prev: Number(b.prev_reading), curr: Number(b.curr_reading) })) : null,
                 h('small', null, billDetail(b)),
                 h('small', { class: 'muted' }, `≈ ${lbp(b.amount, biz.lbp_rate)} ${t('lbpUnit')}`),
-                (b.payments || []).map((p) => h('small', { class: 'ok' }, `✓ ${payText(p)}${sep()}${t(p.method)}${sep()}${dateLabel(p.paid_at)}`)))))
+                (b.payments || []).map((p) => h('small', { class: 'ok' }, `✓ ${payText(p)}${sep()}${t(p.method)}${sep()}${dateLabel(p.paid_at)}`)),
+                photos.has(`${s.id}:${b.month}`) && s.sk ? h('button', { type: 'button', class: 'btn ghost small', onclick: () => showPhoto(s.sk, s.business_id, s.id, b.month, biz.name) }, icon('camera'), t('meterPhoto')) : null)))
               : h('p', { class: 'muted pad' }, t('noSubscriptionBills'))));
       }));
   }
@@ -2023,6 +2060,462 @@
     } }, personFields(s.info), save));
   }
 
+  // ===== Notifications =====
+  const nativePush = () => isNative && cfg.nativePush && !!plugins.PushNotifications;
+  function isIOS() { return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
+  function standalone() { try { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; } catch { return false; } }
+  function webPushOk() { return !isNative && !!cfg.vapidKey && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && window.isSecureContext && /^https?:$/.test(location.protocol); }
+  function pushStatus() {
+    if (nativePush()) return store.get('push') ? 'on' : 'off';
+    if (!webPushOk()) return isIOS() && !isNative && !standalone() ? 'install' : 'none';
+    if (Notification.permission === 'denied') return 'denied';
+    return Notification.permission === 'granted' && store.get('push') ? 'on' : 'off';
+  }
+  function vapidBytes() {
+    const s = cfg.vapidKey.replace(/-/g, '+').replace(/_/g, '/');
+    const bin = atob(s + '='.repeat((4 - (s.length % 4)) % 4));
+    return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  }
+  async function savePush(kind, endpoint, p256dh, auth) {
+    const { error } = await sb.rpc('save_push', { p_kind: kind, p_endpoint: endpoint, p_p256dh: p256dh || null, p_auth: auth || null, p_lang: state.lang });
+    if (error) throw error;
+    store.set('push', state.user.id);
+  }
+  async function enablePush() {
+    if (nativePush()) {
+      const P = plugins.PushNotifications;
+      const perm = await P.requestPermissions();
+      if (perm.receive !== 'granted') { toast(t('pushDenied'), 'bad'); return false; }
+      await new Promise((resolve, reject) => {
+        P.addListener('registration', (tok) => savePush('fcm', tok.value).then(resolve, reject));
+        P.addListener('registrationError', reject);
+        P.register();
+      });
+      return true;
+    }
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { toast(t('pushDenied'), 'bad'); return false; }
+    const reg = await navigator.serviceWorker.ready;
+    let s = await reg.pushManager.getSubscription();
+    if (!s) s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: vapidBytes() });
+    const j = s.toJSON();
+    await savePush('web', j.endpoint, j.keys.p256dh, j.keys.auth);
+    return true;
+  }
+  async function disablePush() {
+    store.del('push');
+    if (nativePush()) { try { await plugins.PushNotifications.unregister(); } catch {} return; }
+    const reg = await navigator.serviceWorker.ready;
+    const s = await reg.pushManager.getSubscription();
+    if (s) { await sb.rpc('drop_push', { p_endpoint: s.endpoint }); await s.unsubscribe(); }
+  }
+  // Keeps the server copy current (new sign-in on this device, language change).
+  async function refreshPush() {
+    try {
+      if (!state.user || !webPushOk() || Notification.permission !== 'granted' || !store.get('push')) return;
+      const reg = await navigator.serviceWorker.ready;
+      const s = await reg.pushManager.getSubscription();
+      if (!s) { store.del('push'); return; }
+      const j = s.toJSON();
+      await savePush('web', j.endpoint, j.keys.p256dh, j.keys.auth);
+    } catch (e) { console.warn(e); }
+  }
+  function pushLabel() {
+    const s = pushStatus();
+    return s === 'on' ? t('pushOn') : s === 'denied' ? t('pushBlocked') : s === 'install' ? t('pushInstall') : t('pushOff');
+  }
+  async function togglePush(after) {
+    const s = pushStatus();
+    if (s === 'install') return sheet(t('notifications'), h('div', { class: 'stack' }, h('p', null, t('pushInstallBody'))));
+    if (s === 'denied') return sheet(t('notifications'), h('div', { class: 'stack' }, h('p', null, t('pushBlockedBody'))));
+    try {
+      if (s === 'on') { await disablePush(); toast(t('pushOffDone')); } else if (await enablePush()) toast(t('pushOnDone'), 'good');
+    } catch (e) { fail(e); }
+    if (after) after();
+  }
+  function pushCard(text) {
+    const s = pushStatus();
+    if ((s !== 'off' && s !== 'install') || store.get(`pushAsk:${state.mode}`)) return null;
+    const card = h('section', { class: 'card push-card' },
+      h('span', { class: 'row-ic' }, icon('bell')),
+      h('div', { class: 'grow' }, h('strong', null, t('pushAskTitle')), h('small', { class: 'muted' }, s === 'install' ? t('pushInstallBody') : text)),
+      h('div', { class: 'push-btns' },
+        s === 'off' ? h('button', { type: 'button', class: 'btn primary small', onclick: async () => {
+          try { if (await enablePush()) { toast(t('pushOnDone'), 'good'); card.remove(); } } catch (e) { fail(e); }
+        } }, t('turnOn')) : null,
+        h('button', { type: 'button', class: 'link', onclick: () => { store.set(`pushAsk:${state.mode}`, '1'); card.remove(); } }, t('notNow'))));
+    return card;
+  }
+
+  function reminderLabel(days) { return Number(days) > 0 ? t('remindEvery', { n: days }) : t('remindOff'); }
+  function reminderSheet() {
+    const biz = state.business;
+    const days = [0, 3, 5, 7, 10, 14, 30];
+    const cur = Number(biz.reminder_days ?? 7);
+    const seg = h('div', { class: 'chips wrap' }, days.map((d) => h('label', { class: 'chip-radio' },
+      h('input', { type: 'radio', name: 'reminder_days', value: String(d), checked: d === cur }), h('span', null, d ? t('daysN', { n: d }) : t('off')))));
+    const save = h('button', { type: 'submit', class: 'btn primary block' }, t('save'));
+    const close = sheet(t('reminders'), h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
+      e.preventDefault();
+      const v = Number(formData(e.target).reminder_days || 0);
+      busy(save, true);
+      try {
+        const { data, error } = await sb.from('businesses').update({ reminder_days: v }).eq('id', biz.id).select().single();
+        if (error) throw error;
+        state.ownBusiness = data; state.business = data; close(); toast(t('saved'), 'good'); viewMore();
+      } catch (err) { fail(err); } finally { busy(save, false); }
+    } }, h('p', { class: 'muted' }, t('remindersBody')), seg, h('small', { class: 'muted' }, t('remindersHint')), save));
+  }
+
+  // ===== Meter photos =====
+  function photoPath(bizId, subId, month) { return `${bizId}/${subId}/${String(month).slice(0, 7)}.bin`; }
+  function photoKey(month) { return `ph:${state.business.id}:${month}`; }
+  function pendingPhotos(month) { try { return JSON.parse(store.get(photoKey(month)) || '[]'); } catch { return []; } }
+
+  async function shrinkPhoto(file) {
+    let src;
+    try { src = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch {
+      src = await new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('image')); };
+        img.src = url;
+      });
+    }
+    const w0 = src.width; const h0 = src.height;
+    const k = Math.min(1, 1280 / Math.max(w0, h0));
+    const c = document.createElement('canvas');
+    c.width = Math.round(w0 * k); c.height = Math.round(h0 * k);
+    c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+    const blob = await new Promise((resolve) => c.toBlob(resolve, 'image/jpeg', 0.72));
+    if (!blob) throw new Error('image');
+    return new Uint8Array(await blob.arrayBuffer());
+  }
+
+  function pickPhoto() {
+    return new Promise((resolve) => {
+      const inp = h('input', { type: 'file', accept: 'image/*', capture: 'environment', class: 'hidden-file' });
+      inp.addEventListener('change', () => { resolve(inp.files && inp.files[0]); inp.remove(); });
+      document.body.append(inp);
+      inp.click();
+    });
+  }
+
+  async function uploadMeterPhoto(row, month, btn) {
+    const p = state.people.find((x) => x.id === row.id);
+    if (!p || !p.sk) return toast(t('error'), 'bad');
+    if (!navigator.onLine) return toast(t('photoOnline'), 'warn');
+    const file = await pickPhoto();
+    if (!file) return;
+    busy(btn, true);
+    try {
+      const data = await V.encBytes(p.sk, await shrinkPhoto(file));
+      const up = await sb.storage.from('meters').upload(photoPath(state.business.id, p.id, month), data, { upsert: true, contentType: 'application/octet-stream' });
+      if (up.error) throw up.error;
+      if (row.rid) {
+        const { error } = await sb.from('readings').update({ photo: true }).eq('id', row.rid);
+        if (error) throw error;
+      } else {
+        const list = pendingPhotos(month);
+        if (!list.includes(p.id)) list.push(p.id);
+        store.set(photoKey(month), JSON.stringify(list));
+      }
+      row.photo = true;
+      btn.classList.add('has');
+      btn.setAttribute('aria-label', t('photoRetake'));
+      toast(t('photoSaved'), 'good');
+    } catch (e) { fail(e); } finally { busy(btn, false); }
+  }
+
+  async function showPhoto(sk, bizId, subId, month, title) {
+    const body = h('div', { class: 'stack' }, h('div', { class: 'skeleton photo' }));
+    sheet(title || t('meterPhoto'), body);
+    try {
+      const { data, error } = await sb.storage.from('meters').download(photoPath(bizId, subId, month));
+      if (error) throw error;
+      const bytes = await V.decBytes(sk, await data.arrayBuffer());
+      if (!bytes) throw new Error('decrypt');
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' }));
+      const img = h('img', { class: 'meter-photo', alt: t('meterPhoto'), src: url });
+      img.addEventListener('load', () => setTimeout(() => URL.revokeObjectURL(url), 1000));
+      body.replaceChildren(img, h('small', { class: 'muted center' }, monthLabel(month)));
+    } catch (e) {
+      console.error(e);
+      body.replaceChildren(h('p', { class: 'muted center' }, t('photoMissing')));
+    }
+  }
+
+  // ===== Import from Excel / CSV =====
+  async function unzip(buf) {
+    const u = new Uint8Array(buf);
+    const dv = new DataView(u.buffer, u.byteOffset, u.byteLength);
+    let eocd = -1;
+    for (let i = u.length - 22; i >= Math.max(0, u.length - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    if (eocd < 0) throw new Error('zip');
+    const count = dv.getUint16(eocd + 10, true);
+    let p = dv.getUint32(eocd + 16, true);
+    const files = new Map();
+    const td = new TextDecoder();
+    for (let n = 0; n < count; n++) {
+      if (dv.getUint32(p, true) !== 0x02014b50) throw new Error('zip');
+      const method = dv.getUint16(p + 10, true);
+      const size = dv.getUint32(p + 20, true);
+      const nameLen = dv.getUint16(p + 28, true);
+      const extra = dv.getUint16(p + 30, true);
+      const comment = dv.getUint16(p + 32, true);
+      const local = dv.getUint32(p + 42, true);
+      const name = td.decode(u.subarray(p + 46, p + 46 + nameLen));
+      files.set(name, { method, size, local });
+      p += 46 + nameLen + extra + comment;
+    }
+    return async (name) => {
+      const f = files.get(name);
+      if (!f) return null;
+      const start = f.local + 30 + dv.getUint16(f.local + 26, true) + dv.getUint16(f.local + 28, true);
+      const raw = u.subarray(start, start + f.size);
+      if (f.method === 0) return td.decode(raw);
+      if (f.method !== 8 || typeof DecompressionStream === 'undefined') throw new Error('zip');
+      const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      return new Response(stream).text();
+    };
+  }
+
+  function xmlDoc(s) { return new DOMParser().parseFromString(s, 'application/xml'); }
+  function byTag(node, tag) { return [...node.getElementsByTagName('*')].filter((e) => e.localName === tag); }
+  function colIndex(ref) { let n = 0; for (const ch of String(ref).replace(/\d+/g, '')) n = n * 26 + (ch.charCodeAt(0) - 64); return n - 1; }
+
+  async function readXlsx(buf) {
+    const get = await unzip(buf);
+    const shared = [];
+    const ss = await get('xl/sharedStrings.xml');
+    if (ss) for (const si of byTag(xmlDoc(ss), 'si')) shared.push(byTag(si, 't').map((x) => x.textContent).join(''));
+    let sheetPath = 'xl/worksheets/sheet1.xml';
+    const wb = await get('xl/workbook.xml');
+    const rels = await get('xl/_rels/workbook.xml.rels');
+    if (wb && rels) {
+      const first = byTag(xmlDoc(wb), 'sheet')[0];
+      const rid = first && [...first.attributes].find((a) => a.localName === 'id' && a.prefix);
+      const rel = rid && byTag(xmlDoc(rels), 'Relationship').find((r) => r.getAttribute('Id') === rid.value);
+      if (rel) { const tgt = rel.getAttribute('Target'); sheetPath = tgt.startsWith('/') ? tgt.slice(1) : `xl/${tgt}`; }
+    }
+    const sheetXml = await get(sheetPath);
+    if (!sheetXml) throw new Error('sheet');
+    const rows = [];
+    for (const r of byTag(xmlDoc(sheetXml), 'row')) {
+      const row = [];
+      for (const c of byTag(r, 'c')) {
+        const type = c.getAttribute('t');
+        const v = byTag(c, 'v')[0];
+        let val = '';
+        if (type === 's') val = shared[Number(v && v.textContent)] || '';
+        else if (type === 'inlineStr') val = byTag(c, 't').map((x) => x.textContent).join('');
+        else val = v ? v.textContent : '';
+        row[colIndex(c.getAttribute('r'))] = val;
+      }
+      rows.push(Array.from(row, (x) => (x === undefined ? '' : String(x))));
+    }
+    return rows;
+  }
+
+  function readCsv(text) {
+    text = text.replace(/^﻿/, '');
+    const firstLine = text.split(/\r?\n/)[0] || '';
+    const delim = [',', ';', '\t'].sort((a, b) => firstLine.split(b).length - firstLine.split(a).length)[0];
+    const rows = []; let row = []; let cell = ''; let q = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (q) {
+        if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === delim) { row.push(cell); cell = ''; }
+      else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; }
+      else cell += ch;
+    }
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+    return rows;
+  }
+
+  const IMPORT_COLS = {
+    name: ['name', 'full name', 'subscriber', 'subscriber name', 'customer', 'الاسم', 'اسم', 'الإسم', 'اسم المشترك', 'المشترك'],
+    phone: ['phone', 'mobile', 'phone number', 'tel', 'telephone', 'whatsapp', 'الهاتف', 'هاتف', 'رقم الهاتف', 'الموبايل', 'موبايل', 'خلوي', 'الرقم', 'رقم'],
+    building: ['building', 'address', 'المبنى', 'مبنى', 'بناية', 'البناية', 'العنوان'],
+    floor: ['floor', 'الطابق', 'طابق'],
+    amps: ['amps', 'amp', 'ampere', 'amperes', 'a', 'أمبير', 'امبير', 'الأمبير', 'الامبير', 'أمبيرات'],
+    type: ['billing', 'type', 'billing type', 'plan', 'نوع', 'النوع', 'نوع الاشتراك', 'الاشتراك'],
+    reading: ['meter reading', 'reading', 'start reading', 'initial reading', 'current reading', 'القراءة', 'قراءة العداد', 'القراءة الأولى', 'قراءة'],
+    meter: ['meter number', 'meter no', 'meter #', 'meter', 'رقم العداد', 'العداد', 'عداد'],
+    label: ['private name', 'label', 'nickname', 'my name for them', 'الاسم الخاص', 'اسم خاص', 'لقب']
+  };
+
+  function normHead(s) { return String(s || '').toLowerCase().replace(/[ً-ْ_]/g, '').replace(/\s+/g, ' ').trim(); }
+
+  function mapColumns(header) {
+    const heads = header.map(normHead);
+    const map = {};
+    for (const [key, names] of Object.entries(IMPORT_COLS)) {
+      let i = heads.findIndex((x, idx) => names.includes(x) && !Object.values(map).includes(idx));
+      if (i < 0 && key !== 'amps') i = heads.findIndex((x, idx) => x && names.some((n) => n.length > 3 && x.includes(n)) && !Object.values(map).includes(idx));
+      if (i >= 0) map[key] = i;
+    }
+    if (map.meter !== undefined && map.reading === map.meter) delete map.meter;
+    return map;
+  }
+
+  function phoneKey(v) { return intlPhone(v); }
+
+  function prepareImport(rows) {
+    const nonEmpty = rows.filter((r) => r.some((c) => String(c).trim()));
+    if (nonEmpty.length < 2) return { error: t('importEmpty') };
+    const map = mapColumns(nonEmpty[0]);
+    if (map.name === undefined || map.phone === undefined) return { error: t('importNoCols') };
+    const seen = new Set(state.people.map((p) => phoneKey(p.info.phone)).filter(Boolean));
+    const ok = []; const bad = [];
+    nonEmpty.slice(1).forEach((r, i) => {
+      const line = i + 2;
+      const get = (k) => (map[k] === undefined ? '' : String(r[map[k]] ?? '').trim());
+      const name = clean(get('name'), 80);
+      let phone = get('phone').replace(/\.0+$/, '');
+      if (/^\d+(\.\d+)?e\+?\d+$/i.test(phone)) phone = String(Math.round(Number(phone)));
+      if (/^\d{7}$/.test(phone)) phone = `0${phone}`; // Excel drops the leading 0 of Lebanese numbers
+      if (!name) return bad.push({ line, why: t('nameRequired') });
+      if (!validPhone(phone)) return bad.push({ line, name, why: t('phoneRequired') });
+      const key = phoneKey(phone);
+      if (seen.has(key)) return bad.push({ line, name, why: t('importDup') });
+      const ampsRaw = get('amps');
+      const amps = ampsRaw === '' ? 5 : parseInt(String(ampsRaw).replace(/[^\d]/g, ''), 10);
+      if (!(amps >= 1 && amps <= 200)) return bad.push({ line, name, why: t('importAmps') });
+      const typeRaw = normHead(get('type'));
+      const flat = /flat|fixed|مقطوع|ثابت/.test(typeRaw);
+      const reading = get('reading') === '' ? 0 : num(get('reading'));
+      if (!flat && !(reading >= 0)) return bad.push({ line, name, why: t('importReading') });
+      seen.add(key);
+      ok.push({
+        info: { name, phone: clean(phone, 20), building: clean(get('building'), 80), floor: clean(get('floor'), 20), meter: flat ? '' : clean(get('meter'), 40) },
+        label: clean(get('label'), 80), amps, billing_type: flat ? 'flat' : 'metered', initial_reading: flat ? 0 : reading
+      });
+    });
+    return { ok, bad, map };
+  }
+
+  async function runImport(list, onProgress) {
+    const made = [];
+    for (let i = 0; i < list.length; i += 100) {
+      const chunk = list.slice(i, i + 100);
+      const rows = []; const keys = [];
+      for (const x of chunk) {
+        const sk = V.genKey();
+        keys.push(sk);
+        rows.push({
+          business_id: state.business.id, enc: await V.enc(sk, x.info), wk: await V.enc(state.bk, { k: sk }),
+          oenc: x.label ? await V.enc(state.bk, { label: x.label }) : null,
+          amps: x.amps, billing_type: x.billing_type, initial_reading: x.initial_reading, active: true
+        });
+      }
+      const res = await sb.from('subscribers').insert(rows).select('id, invite_code');
+      if (res.error) throw res.error;
+      res.data.forEach((d, j) => made.push(Object.assign({}, d, { sk: keys[j], info: chunk[j].info, label: chunk[j].label, title: chunk[j].label || chunk[j].info.name })));
+      onProgress(Math.min(list.length, i + 100));
+    }
+    return made;
+  }
+
+  function templateRows() {
+    const head = state.lang === 'ar'
+      ? ['الاسم', 'الهاتف', 'المبنى', 'الطابق', 'أمبير', 'نوع الاشتراك', 'رقم العداد', 'قراءة العداد', 'الاسم الخاص']
+      : ['Name', 'Phone', 'Building', 'Floor', 'Amps', 'Billing type', 'Meter number', 'Meter reading', 'Private name'];
+    const ex = state.lang === 'ar'
+      ? [['جورج حداد', '03 123 456', 'بناية الأمل', '2', '10', 'عداد', 'M-204', '1520', 'أبو جورج'], ['ريما خوري', '71 987 654', 'بناية الأمل', '4', '5', 'مقطوع', '', '', '']]
+      : [['George Haddad', '03 123 456', 'Al Amal bldg', '2', '10', 'metered', 'M-204', '1520', 'Abu George'], ['Rima Khoury', '71 987 654', 'Al Amal bldg', '4', '5', 'flat', '', '', '']];
+    return [head, ...ex];
+  }
+
+  function importSheet() {
+    const body = h('div', { class: 'stack' });
+    const close = sheet(t('importTitle'), body);
+    const start = () => {
+      const file = h('input', { type: 'file', accept: '.xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', class: 'hidden-file' });
+      const pick = h('button', { type: 'button', class: 'btn primary block', onclick: () => file.click() }, t('importPick'));
+      file.addEventListener('change', async () => {
+        const f = file.files && file.files[0];
+        if (!f) return;
+        busy(pick, true);
+        try {
+          const buf = await f.arrayBuffer();
+          const isZip = new Uint8Array(buf.slice(0, 2)).join() === '80,75';
+          if (!isZip && /\.xls$/i.test(f.name)) throw new Error('xls');
+          const rows = isZip ? await readXlsx(buf) : readCsv(new TextDecoder().decode(buf));
+          await loadPeople();
+          preview(prepareImport(rows), f.name);
+        } catch (e) {
+          console.error(e);
+          toast(String(e && e.message) === 'xls' ? t('importOldXls') : t('importBadFile'), 'bad');
+        } finally { busy(pick, false); }
+      });
+      body.replaceChildren(
+        h('p', null, t('importBody')),
+        h('ul', { class: 'hint-list' }, h('li', null, t('importCols1')), h('li', null, t('importCols2')), h('li', null, t('importCols3'))),
+        file, pick,
+        h('button', { type: 'button', class: 'btn ghost block', onclick: () => downloadCsv('ishtirak-subscribers-template.csv', templateRows()) }, t('importTemplate')),
+        h('small', { class: 'muted' }, t('importPrivacy')));
+    };
+    const preview = (res, name) => {
+      if (res.error) {
+        body.replaceChildren(h('p', { class: 'bad' }, res.error), h('button', { type: 'button', class: 'btn ghost block', onclick: start }, t('importAgain')));
+        return;
+      }
+      const go1 = h('button', { type: 'button', class: 'btn primary block', disabled: !res.ok.length }, t('importGo', { n: res.ok.length }));
+      go1.addEventListener('click', async () => {
+        busy(go1, true);
+        try {
+          const made = await runImport(res.ok, (n) => { go1.textContent = t('importProgress', { n, total: res.ok.length }); });
+          memo.clear();
+          close();
+          toast(t('importDone', { n: made.length }), 'good');
+          go('people');
+          if (made.length) linkQueue(made);
+        } catch (e) { fail(e); go1.textContent = t('importGo', { n: res.ok.length }); } finally { busy(go1, false); }
+      });
+      body.replaceChildren(
+        h('div', { class: 'summary' }, h('strong', null, name),
+          h('span', { class: 'ok' }, t('importReady', { n: res.ok.length })),
+          res.bad.length ? h('span', { class: 'bad' }, t('importSkipped', { n: res.bad.length })) : null),
+        res.ok.length ? h('div', { class: 'card flush import-list' }, res.ok.slice(0, 8).map((x) => h('div', { class: 'item static' }, avatar(x.label || x.info.name),
+          h('div', { class: 'grow' }, h('strong', null, x.label || x.info.name), h('small', { class: 'muted' }, [ltr(x.info.phone), x.info.building].filter(Boolean).join(sep()))),
+          h('span', { class: 'row' }, h('small', { class: 'muted' }, typeLabel(x.billing_type)), h('span', { class: 'pill amps' }, `${x.amps}A`)))),
+          res.ok.length > 8 ? h('p', { class: 'muted pad small' }, t('importMore', { n: res.ok.length - 8 })) : null) : null,
+        res.bad.length ? h('details', { class: 'import-bad' }, h('summary', null, t('importProblems')),
+          h('div', { class: 'stack tight' }, res.bad.slice(0, 50).map((b) => h('small', null, `${t('rowN', { n: b.line })}${b.name ? ` (${b.name})` : ''}: ${b.why}`)))) : null,
+        go1,
+        h('button', { type: 'button', class: 'btn ghost block', onclick: start }, t('importAgain')));
+    };
+    start();
+  }
+
+  function linkQueue(people) {
+    let i = 0;
+    const body = h('div', { class: 'stack' });
+    const close = sheet(t('sendLinks'), body);
+    const draw = () => {
+      if (i >= people.length) {
+        body.replaceChildren(h('div', { class: 'empty' }, h('p', null, t('allLinksSent', { n: people.length })),
+          h('button', { type: 'button', class: 'btn primary', onclick: () => close() }, t('close'))));
+        return;
+      }
+      const p = people[i];
+      const bar = h('div', { class: 'bar dark' }, h('i'));
+      bar.firstChild.style.width = `${Math.round((i / people.length) * 100)}%`;
+      const msg = t('linkMsg', { biz: state.business.name, name: p.info.name || '', url: inviteUrl(p) });
+      body.replaceChildren(
+        h('small', { class: 'muted' }, t('sendProgress', { i: i + 1, n: people.length })), bar,
+        h('div', { class: 'summary' }, h('strong', null, p.title), h('span', { class: 'muted' }, ltr(p.info.phone))),
+        h('button', { type: 'button', class: 'btn wa block', onclick: () => { openExternal(waLink(p.info.phone, msg)); i++; draw(); } }, icon('chat'), t('openWhatsApp')),
+        h('button', { type: 'button', class: 'btn ghost block', onclick: () => { i++; draw(); } }, t('skip')),
+        h('button', { type: 'button', class: 'link', onclick: () => close() }, t('later')));
+    };
+    draw();
+  }
+
   function menuRow(label, value, onclick, ic) {
     return h(onclick ? 'button' : 'div', { class: 'item', type: onclick ? 'button' : null, onclick },
       h('span', { class: 'row-ic' }, icon(ic)),
@@ -2038,7 +2531,9 @@
         menuRow(t('collectors'), t('collectorsShort'), () => go('collectors'), 'people'),
         menuRow(t('reports'), t('reportsShort'), () => go('reports'), 'bills'),
         menuRow(t('inviteAll'), t('inviteAllShort'), () => go('invite'), 'send'),
+        menuRow(t('importTitle'), t('importShort'), importSheet, 'people'),
         menuRow(t('tabNotices'), t('noticesShort'), () => go('notices'), 'bell'),
+        menuRow(t('reminders'), reminderLabel(biz.reminder_days ?? 7), reminderSheet, 'bell'),
         menuRow(t('stepPrice'), monthLabel(monthDate(state.month)), async () => {
           const cur = await sb.from('tariffs').select('*').eq('business_id', biz.id).eq('month', monthDate(state.month)).maybeSingle();
           tariffSheet(cur.data, () => {});
@@ -2057,6 +2552,7 @@
         state.roles.length ? menuRow(t('switchToCollector'), null, () => { state.mode = 'collector'; go('collect'); }, 'check') : null));
     }
     parts.push(h('section', { class: 'card flush' },
+      pushStatus() !== 'none' ? menuRow(t('notifications'), pushLabel(), () => togglePush(viewMore), 'bell') : null,
       menuRow(t('language'), state.lang === 'ar' ? 'العربية' : 'English', switchLang, 'globe'),
       menuRow(t('security'), t('securityShort'), null, 'lock')));
     parts.push(h('button', { type: 'button', class: 'btn danger ghost block', onclick: async () => {
@@ -2141,7 +2637,7 @@
   });
 
   let pendingReload = false;
-  if ('serviceWorker' in navigator && location.protocol === 'https:' && !isNative) {
+  if ('serviceWorker' in navigator && window.isSecureContext && /^https?:$/.test(location.protocol) && !isNative) {
     const hadController = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (!hadController) return;

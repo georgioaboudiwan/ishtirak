@@ -80,10 +80,23 @@ Sets the version in the web app, the offline cache (so phones pick up the update
 - Collectors: each gets a private link, sees unpaid bills and records payments. Every payment is tagged with who collected it.
 - Subscribers: personal link, no email or password. They see bills, payments and notices.
 - Meter readings are kept on the phone when there is no signal and sent when the connection returns.
+- Meter photos: tap the camera next to a reading to attach a photo. The owner sees it on the bill and the subscriber sees it in their bill details.
+- Notifications on the phone: bill ready, payment received, notices (cuts, maintenance) and join requests.
+- Payment reminders: subscribers who still owe get a notification after a set number of days (More > Payment reminders, default 7, off is allowed), repeated at the same interval until they pay.
+- Import from Excel: add many subscribers from an .xlsx or .csv file (English or Arabic column names), with a preview, skipped-row reasons, duplicate phone check, and a WhatsApp queue to send everyone their link.
+
+## Notifications
+
+- Web: works in Chrome, Edge, Firefox and Samsung Internet on Android, and on iPhone (iOS 16.4+) once the app is added to the Home Screen.
+- Database triggers put messages in `push_queue`. Every minute `pg_cron` calls the `notify` Edge Function (`supabase/functions/notify`), which sends them with Web Push (VAPID) and removes devices that are gone.
+- Reminders run daily at 07:00 UTC (`private.queue_reminders`).
+- Keys live in the Supabase Vault (`push_drain`, `vapid_public`, `vapid_private`, `vapid_subject`). The public VAPID key is also in `docs/js/config.js`.
+- Messages say only the generator's name, the month and amounts, never names or phone numbers.
+- Android and iPhone apps: add Firebase to the apps (`google-services.json` for Android, APNs key in Firebase for iPhone), store the Firebase service account JSON in the Vault as `fcm_service_account`, then set `nativePush: true` in `docs/js/config.js` and run `npm run sync`.
 
 ## Database
 
-`supabase/schema.sql` holds the full database setup (tables, functions, triggers, row level security, grants). Apply it to an empty Supabase project to rebuild the backend, then turn on anonymous sign-ins and set the Site URL and redirect URLs.
+`supabase/schema.sql` holds the full database setup (tables, functions, triggers, row level security, grants) up to v1.5, and `supabase/v1.6.sql` adds notifications, reminders and meter photos (its header lists the Vault secrets and the Edge Function to deploy). Apply both to an empty Supabase project to rebuild the backend, then turn on anonymous sign-ins and set the Site URL and redirect URLs.
 
 ## Security
 
@@ -95,5 +108,8 @@ Sets the version in the web app, the offline cache (so phones pick up the update
 - Bill amounts are computed in the database and can't be edited from the app. Payments can't exceed what's left.
 - Subscribers sign in anonymously per device; a link works on up to 5 devices and the owner can replace it at any time.
 - Collectors receive the business key wrapped inside their private link, so they can read names and phones but can only fetch what the access rules allow. Stopping or deleting a collector cuts their access.
+- Meter photos are shrunk and encrypted on the phone with the subscriber's own key before upload, into a private storage bucket. Only the owner and that subscriber can fetch the file, and only they can decrypt it.
+- Excel and CSV files are read on the phone; nothing is uploaded until each row is encrypted.
+- Push subscriptions and the message queue can't be read by any app user; only the server function can send.
 - Auth email templates are in `supabase/email-templates/`.
 - Strict Content-Security-Policy, no third-party scripts, all user text rendered with `textContent`.

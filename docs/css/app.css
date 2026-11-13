@@ -408,3 +408,31 @@ body.has-nav #dock {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* v1.6: notifications, meter photos, import */
+.push-card { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-color: color-mix(in srgb, var(--amber) 45%, var(--line)); }
+.push-card .row-ic { background: var(--amber-soft); color: var(--amber-text); }
+.push-card strong { display: block; }
+.push-card small { display: block; font-size: 13.5px; line-height: 1.45; }
+.push-btns { display: flex; flex-direction: column; align-items: center; gap: 0; flex: none; }
+.cam { width: 44px; height: 44px; border-radius: 14px; border: 1px dashed var(--line); background: transparent; color: var(--muted); display: grid; place-items: center; flex: none; position: relative; }
+.cam .ic { width: 22px; height: 22px; }
+.cam.has { border-style: solid; border-color: color-mix(in srgb, var(--good) 55%, transparent); color: var(--good); background: var(--good-soft); }
+.cam.has::after { content: ""; position: absolute; top: 5px; inset-inline-end: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
+.cam.loading .ic { opacity: .25; }
+.cam.loading::before { content: ""; position: absolute; width: 18px; height: 18px; border: 2.5px solid var(--ink); border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
+.meter-photo { width: 100%; max-height: 70vh; object-fit: contain; border-radius: var(--r); background: var(--sunk); }
+.skeleton.photo { height: 320px; border-radius: var(--r); }
+.hidden-file { position: fixed; inset-inline-start: -9999px; width: 1px; height: 1px; opacity: 0; }
+.chips.wrap { flex-wrap: wrap; overflow: visible; }
+.chip-radio { position: relative; }
+.chip-radio input { position: absolute; opacity: 0; inset: 0; width: 100%; height: 100%; min-height: 0; margin: 0; cursor: pointer; }
+.chip-radio span { display: inline-grid; place-items: center; min-height: 40px; padding: 6px 16px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); font-size: 14.5px; font-weight: 500; color: var(--muted); }
+.chip-radio input:checked + span { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 700; }
+.chip-radio input:focus-visible + span { outline: 3px solid color-mix(in srgb, var(--amber) 70%, transparent); }
+.hint-list { margin: 0; padding-inline-start: 20px; display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 14px; }
+.import-list .item { min-height: 58px; }
+.import-bad summary { cursor: pointer; color: var(--bad); font-size: 14px; padding: 4px 0; }
+.import-bad .stack { padding: 6px 0 0; max-height: 220px; overflow-y: auto; }
+.photo-slot:empty { display: none; }
+@media (max-width: 360px) { .cam { width: 38px; height: 38px; } }
