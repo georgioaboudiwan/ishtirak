@@ -26,16 +26,31 @@ npm run serve
 ```
 Open http://localhost:8080
 
-## 4. Mobile app (Capacitor)
+## 4. Mobile apps (Android and iPhone)
 
+The `android/` and `ios/` folders are complete Capacitor projects that wrap the same `docs/` web app. Icons and splash screens come from `assets/` (`npm run assets` regenerates them).
+
+Android (Windows, Mac or Linux with Android Studio):
 ```
 npm install
-npx cap add android
-npx cap add ios        # macOS + Xcode only
-npx cap sync
-npx cap open android
+npm run android          # opens Android Studio; press Run, or Build > Generate Signed Bundle for the Play Store
+npm run android:apk      # or build a test APK from the command line
 ```
-After any change in `docs/`, run `npx cap sync` again.
+
+iPhone (Mac with Xcode 15+):
+```
+npm install
+npm run ios              # opens Xcode; pick your team under Signing, then Run or Product > Archive for the App Store
+```
+
+After any change in `docs/`, `npm run sync` copies it into both apps. Links sent to subscribers and collectors always point to the public website (`publicUrl` in `docs/js/config.js`).
+
+## Releasing a new version
+
+```
+python3 scripts/release.py 1.6.0
+```
+Sets the version in the web app, the offline cache (so phones pick up the update), Android and iPhone. Release notes live in `releases/`.
 
 ## How billing works
 
@@ -80,4 +95,5 @@ After any change in `docs/`, run `npx cap sync` again.
 - Bill amounts are computed in the database and can't be edited from the app. Payments can't exceed what's left.
 - Subscribers sign in anonymously per device; a link works on up to 5 devices and the owner can replace it at any time.
 - Collectors receive the business key wrapped inside their private link, so they can read names and phones but can only fetch what the access rules allow. Stopping or deleting a collector cuts their access.
+- Auth email templates are in `supabase/email-templates/`.
 - Strict Content-Security-Policy, no third-party scripts, all user text rendered with `textContent`.

@@ -1,19 +1,25 @@
 {
   "name": "ishtirak",
-  "version": "0.1.0",
+  "version": "1.5.0",
   "private": true,
   "scripts": {
     "serve": "npx --yes http-server docs -p 8080 -c-1",
-    "cap:sync": "npx cap sync",
-    "cap:android": "npx cap open android",
-    "cap:ios": "npx cap open ios"
+    "assets": "npx capacitor-assets generate --android --ios --iconBackgroundColor '#121a24' --iconBackgroundColorDark '#121a24' --splashBackgroundColor '#121a24' --splashBackgroundColorDark '#0e131a'",
+    "sync": "npx cap sync",
+    "android": "npx cap sync android && npx cap open android",
+    "ios": "npx cap sync ios && npx cap open ios",
+    "android:apk": "npx cap sync android && cd android && ./gradlew assembleDebug",
+    "android:release": "npx cap sync android && cd android && ./gradlew bundleRelease"
   },
   "dependencies": {
     "@capacitor/android": "^7.0.0",
     "@capacitor/core": "^7.0.0",
-    "@capacitor/ios": "^7.0.0"
+    "@capacitor/ios": "^7.0.0",
+    "@capacitor/share": "^7.0.0",
+    "@capacitor/filesystem": "^7.0.0"
   },
   "devDependencies": {
-    "@capacitor/cli": "^7.0.0"
+    "@capacitor/cli": "^7.0.0",
+    "@capacitor/assets": "^3.0.5"
   }
 }

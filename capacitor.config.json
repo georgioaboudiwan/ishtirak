@@ -2,5 +2,19 @@
   "appId": "lb.ishtirak.app",
   "appName": "Ishtirak",
   "webDir": "docs",
-  "server": { "androidScheme": "https" }
+  "server": {
+    "androidScheme": "https"
+  },
+  "backgroundColor": "#0e131a",
+  "android": {
+    "adjustMarginsForEdgeToEdge": "auto",
+    "allowMixedContent": false,
+    "captureInput": true
+  },
+  "ios": {
+    "contentInset": "never",
+    "scrollEnabled": true,
+    "limitsNavigationsToAppBoundDomains": false,
+    "backgroundColor": "#0e131a"
+  }
 }

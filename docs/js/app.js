@@ -3,7 +3,20 @@
 
   const cfg = window.APP_CONFIG;
   const V = window.Vault;
+  const isNative = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
+  const plugins = (window.Capacitor && window.Capacitor.Plugins) || {};
+  let dataVer = 0;
+  const READ_RPC = /\/rpc\/(my_subscriptions|my_collector_roles|collector_subscribers|join_preview)$/;
+  const trackedFetch = (input, init) => {
+    const method = ((init && init.method) || (input && input.method) || 'GET').toUpperCase();
+    const url = String(typeof input === 'string' ? input : input.url).split('?')[0];
+    const write = method !== 'GET' && method !== 'HEAD' && url.includes('/rest/v1/') && !READ_RPC.test(url);
+    if (write) dataVer++;
+    const res = fetch(input, init);
+    return write ? res.finally(() => { dataVer++; }) : res;
+  };
   const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey, {
+    global: { fetch: trackedFetch },
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, flowType: 'implicit' }
   });
 
@@ -186,8 +199,24 @@
   }
 
   function smsLink(phone, text) { return `sms:+${intlPhone(phone)}?&body=${encodeURIComponent(text)}`; }
-  function openExternal(url) { window.open(url, '_blank', 'noopener,noreferrer'); }
-  function appUrl() { return `${location.origin}${location.pathname}`; }
+  function openExternal(url) {
+    if (isNative) {
+      const a = h('a', { href: url, rel: 'noopener' });
+      document.body.append(a); a.click(); a.remove();
+      return;
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+  function appUrl() { return isNative || !/^https?:$/.test(location.protocol) ? cfg.publicUrl : `${location.origin}${location.pathname}`; }
+
+  const memo = new Map();
+  async function cached(key, fn, ttl) {
+    const hit = memo.get(key);
+    if (hit && hit.ver === dataVer && Date.now() - hit.at < (ttl || 30000)) return hit.val;
+    const entry = { ver: dataVer, at: Date.now(), val: fn() };
+    memo.set(key, entry);
+    try { return await entry.val; } catch (e) { if (memo.get(key) === entry) memo.delete(key); throw e; }
+  }
   function inviteUrl(p) { return `${appUrl()}#/i/${p.invite_code}.${p.sk}`; }
   function joinUrl() { return `${appUrl()}#/b/${state.business.join_code}`; }
 
@@ -197,6 +226,7 @@
   }
 
   async function shareText(text) {
+    if (isNative && plugins.Share) { try { await plugins.Share.share({ text }); } catch {} return; }
     if (navigator.share) { try { await navigator.share({ text }); } catch {} return; }
     openExternal(waLink('', text));
   }
@@ -780,12 +810,22 @@
   async function ensureKeys() {
     const biz = state.business;
     const cached = store.get(`bk:${biz.id}`);
+    const rowCache = store.get(`bkr:${biz.id}`);
+    if (cached && rowCache) {
+      let saved = null;
+      try { saved = JSON.parse(rowCache); } catch {}
+      if (saved && (await adoptKey(saved, cached))) {
+        if (navigator.onLine) verifyKeys(biz, cached);
+        return true;
+      }
+    }
     if (cached && !navigator.onLine) { state.bk = cached; return true; }
     const { data: row, error } = await sb.from('business_keys').select('*').eq('business_id', biz.id).maybeSingle();
     if (error) {
       if (cached && isNetErr(error)) { state.bk = cached; return true; }
       throw error;
     }
+    if (row) store.set(`bkr:${biz.id}`, JSON.stringify(row));
     if (!row) {
       if (!state.pw) { viewUnlock('setup'); return false; }
       await setupKeys(state.pw);
@@ -803,6 +843,21 @@
     }
     viewUnlock('pw', row);
     return false;
+  }
+
+  async function verifyKeys(biz, bk) {
+    try {
+      const { data: row, error } = await sb.from('business_keys').select('*').eq('business_id', biz.id).maybeSingle();
+      if (error || !row) return;
+      store.set(`bkr:${biz.id}`, JSON.stringify(row));
+      if (!(await adoptKey(row, bk))) {
+        store.del(`bk:${biz.id}`);
+        state.bk = null;
+        route();
+        return;
+      }
+      if (state.pw && !(await V.unwrap(state.pw, row.salt, row.wrapped_pw))) await rewrapPw(row, bk, state.pw);
+    } catch (e) { console.error(e); }
   }
 
   async function adoptKey(row, bk) {
@@ -826,10 +881,12 @@
     const pair = await V.genPair();
     const salt = V.genSalt();
     const rc = V.code(20);
-    const ins = await sb.from('business_keys').insert({
+    const keyRow = {
       business_id: biz.id, salt, wrapped_pw: await V.wrap(pw, salt, bk), wrapped_rc: await V.wrap(rc, salt, bk), wpriv: await V.enc(bk, { priv: pair.priv })
-    });
+    };
+    const ins = await sb.from('business_keys').insert(keyRow);
     if (ins.error) throw ins.error;
+    store.set(`bkr:${biz.id}`, JSON.stringify(keyRow));
     const up = await sb.from('businesses').update({ pub: pair.pub }).eq('id', biz.id);
     if (up.error) throw up.error;
     biz.pub = pair.pub;
@@ -891,6 +948,11 @@
   }
 
   async function loadPeople() {
+    state.people = await cached(`people:${state.mode}:${state.business.id}`, fetchPeople);
+    return state.people;
+  }
+
+  async function fetchPeople() {
     const res = state.mode === 'collector'
       ? await sb.rpc('collector_subscribers', { p_business: state.business.id })
       : await sb.from('subscribers').select('*').eq('business_id', state.business.id).order('created_at');
@@ -906,16 +968,17 @@
       p.title = p.label || p.info.name || '—';
     }
     data.sort((a, b) => a.title.localeCompare(b.title));
-    state.people = data;
     return data;
   }
 
   async function loadOpenBills() {
-    const { data, error } = await sb.from('bills').select(`*, payments(${PAY})`).eq('business_id', state.business.id).neq('status', 'paid');
-    if (error) throw error;
-    state.openBills = data;
+    state.openBills = await cached(`open:${state.business.id}`, async () => {
+      const { data, error } = await sb.from('bills').select(`*, payments(${PAY})`).eq('business_id', state.business.id).neq('status', 'paid');
+      if (error) throw error;
+      return data;
+    });
     state.sent = sentMap();
-    return data;
+    return state.openBills;
   }
 
   function owed(b) { return Math.round((Number(b.amount) - Number(b.paid_amount)) * 100) / 100; }
@@ -930,6 +993,11 @@
 
   async function loadCollectors() {
     if (state.mode !== 'owner') return state.collectors;
+    state.collectors = await cached(`collectors:${state.business.id}`, fetchCollectors);
+    return state.collectors;
+  }
+
+  async function fetchCollectors() {
     const { data, error } = await sb.from('collectors').select('*').eq('business_id', state.business.id).order('created_at');
     if (error) throw error;
     for (const c of data) {
@@ -938,7 +1006,6 @@
       c.phone = info.phone || '';
       c.ck = ((await V.dec(state.bk, c.wck)) || {}).k;
     }
-    state.collectors = data;
     return data;
   }
 
@@ -1119,7 +1186,7 @@
       h('div', { class: 'actions three' },
         p && p.info.phone ? h('button', { type: 'button', class: 'act wa', onclick: () => openExternal(waLink(p.info.phone, text)) }, icon('chat'), h('span', null, 'WhatsApp')) : null,
         h('button', { type: 'button', class: 'act', onclick: () => shareText(text) }, icon('send'), h('span', null, t('share'))),
-        h('button', { type: 'button', class: 'act', onclick: () => window.print() }, icon('bills'), h('span', null, t('print'))))));
+        isNative ? null : h('button', { type: 'button', class: 'act', onclick: () => window.print() }, icon('bills'), h('span', null, t('print'))))));
   }
 
   function sendQueue(bills) {
@@ -1158,6 +1225,7 @@
     const biz = state.business;
     const m = monthDate(state.month);
     await syncDrafts();
+    for (const k of [...memo.keys()]) if (k.endsWith(`:${biz.id}`)) memo.delete(k);
     const [people, tariff, readings, bills] = await Promise.all([
       loadPeople(),
       sb.from('tariffs').select('*').eq('business_id', biz.id).eq('month', m).maybeSingle(),
@@ -1760,6 +1828,13 @@
 
   async function downloadCsv(name, rows) {
     const text = `﻿${rows.map((r) => r.map(csvCell).join(',')).join('\r\n')}`;
+    if (isNative && plugins.Filesystem && plugins.Share) {
+      try {
+        const res = await plugins.Filesystem.writeFile({ path: name, data: text, directory: 'CACHE', encoding: 'utf8' });
+        await plugins.Share.share({ title: name, url: res.uri });
+      } catch (e) { if (!/cancel/i.test((e && e.message) || '')) fail(e); }
+      return;
+    }
     const file = new File([text], name, { type: 'text/csv' });
     if (navigator.canShare && navigator.canShare({ files: [file] }) && window.matchMedia('(pointer: coarse)').matches) {
       try { await navigator.share({ files: [file] }); } catch {}
@@ -1920,6 +1995,7 @@
   }
 
   async function refresh() {
+    memo.clear();
     try { await loadContext(); await route(); } catch (e) { fail(e); }
   }
 
@@ -1987,7 +2063,7 @@
       if (state.user.is_anonymous && !(await confirmBox(t('leaveConfirm'), t('signOut')))) return;
       signOut();
     } }, t('signOut')),
-      state.user.email ? h('p', { class: 'muted center small' }, state.user.email) : null);
+      h('p', { class: 'muted center small' }, [state.user.email, `${t('version')} ${cfg.version}`].filter(Boolean).join(sep())));
     render(head(t('tabMore')), parts);
   }
 
@@ -2046,6 +2122,7 @@
   }
 
   window.addEventListener('online', () => {
+    memo.clear();
     syncDrafts().then((n) => { if (n && state.route === 'home') route(); }).catch(() => {});
   });
 
@@ -2056,8 +2133,24 @@
     setTimeout(boot, 0);
   });
 
-  if ('serviceWorker' in navigator && location.protocol === 'https:') {
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  let lastHidden = 0;
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { lastHidden = Date.now(); return; }
+    if (pendingReload && !document.querySelector('.sheet-wrap')) { location.reload(); return; }
+    if (lastHidden && Date.now() - lastHidden > 120000 && state.user && state.mode && !document.querySelector('.sheet-wrap')) { memo.clear(); route(); }
+  });
+
+  let pendingReload = false;
+  if ('serviceWorker' in navigator && location.protocol === 'https:' && !isNative) {
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) return;
+      const busyNow = document.querySelector('.sheet-wrap') || (document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName));
+      if (busyNow) pendingReload = true; else location.reload();
+    });
+    navigator.serviceWorker.register('sw.js').then((reg) => {
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+    }).catch(() => {});
   }
 
   applyLang();

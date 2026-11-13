@@ -111,6 +111,7 @@ window.I18N = {
     exportBills: 'Export bills to Excel', exportPayments: 'Export payments to Excel', noPaymentsYet: 'No payments yet.',
     privateNameShort: 'Private name', currentReading: 'Current reading', status: 'Status',
     offlineBody: 'Meter readings still work. Everything else needs a connection.', retry: 'Try again',
+    version: 'Version',
     error: 'Something went wrong. Try again.', offline: 'You are offline.'
   },
   ar: {
@@ -225,6 +226,7 @@ window.I18N = {
     exportBills: 'تصدير الفواتير إلى Excel', exportPayments: 'تصدير الدفعات إلى Excel', noPaymentsYet: 'ما في دفعات بعد.',
     privateNameShort: 'الاسم الخاص', currentReading: 'القراءة الحالية', status: 'الحالة',
     offlineBody: 'قراءة العدادات بتضل شغّالة. الباقي بدّو إنترنت.', retry: 'جرّب مرة تانية',
+    version: 'الإصدار',
     error: 'صار في خطأ. جرّب مرة تانية.', offline: 'ما في إنترنت.'
   }
 };
