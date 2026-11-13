@@ -58,6 +58,18 @@ After any change in `docs/`, run `npx cap sync` again.
 - Join requests are sealed to the owner's public key (ECDH P-256).
 - Amps, readings, prices and bill amounts stay as plain numbers so the database can compute and protect bills. Notices and the generator's name are not encrypted.
 
+## Features
+
+- Owner: subscribers, monthly prices, meter readings, bills, payments in USD or LBP, receipts, WhatsApp bill queue, notices, reports and Excel (CSV) export.
+- Old unpaid months are tracked per subscriber and shown on the home screen, in the bills list, on each bill and in the WhatsApp message.
+- Collectors: each gets a private link, sees unpaid bills and records payments. Every payment is tagged with who collected it.
+- Subscribers: personal link, no email or password. They see bills, payments and notices.
+- Meter readings are kept on the phone when there is no signal and sent when the connection returns.
+
+## Database
+
+`supabase/schema.sql` holds the full database setup (tables, functions, triggers, row level security, grants). Apply it to an empty Supabase project to rebuild the backend, then turn on anonymous sign-ins and set the Site URL and redirect URLs.
+
 ## Security
 
 - Names, phone numbers, addresses, meter numbers, the owner's private labels and payment notes are encrypted in the browser (AES-GCM) before they reach the database. Amounts, amps and readings stay readable by the database so it can compute and guard the bills.
@@ -67,4 +79,5 @@ After any change in `docs/`, run `npx cap sync` again.
 - Row Level Security on every table. Subscribers read their data only through database functions; they never see the owner's private label.
 - Bill amounts are computed in the database and can't be edited from the app. Payments can't exceed what's left.
 - Subscribers sign in anonymously per device; a link works on up to 5 devices and the owner can replace it at any time.
+- Collectors receive the business key wrapped inside their private link, so they can read names and phones but can only fetch what the access rules allow. Stopping or deleting a collector cuts their access.
 - Strict Content-Security-Policy, no third-party scripts, all user text rendered with `textContent`.

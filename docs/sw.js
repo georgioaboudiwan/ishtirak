@@ -1,4 +1,4 @@
-const CACHE = 'ishtirak-v5';
+const CACHE = 'ishtirak-v6';
 const SHELL = ['./', 'index.html', 'css/app.css', 'js/config.js', 'js/i18n.js', 'js/vault.js', 'js/app.js', 'vendor/supabase.js', 'manifest.webmanifest', 'icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {

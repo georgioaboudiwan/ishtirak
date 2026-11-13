@@ -23,7 +23,8 @@
     lang: store.get('lang') === 'en' ? 'en' : 'ar',
     user: null, pw: null, business: null, bk: null, priv: null,
     subs: [], mode: null, route: 'home', month: currentMonth(),
-    invite: null, join: null, people: []
+    invite: null, join: null, people: [],
+    cinvite: null, roles: [], role: null, ownBusiness: null, collectors: [], openBills: [], sent: {}, billFilter: null
   };
 
   let holdBoot = false;
@@ -35,6 +36,8 @@
     const hash = location.hash || '';
     let m = hash.match(/^#\/i\/([A-Z0-9]{24})\.([A-Za-z0-9_-]{43})$/);
     if (m) { state.invite = { token: m[1], sk: m[2] }; return; }
+    m = hash.match(/^#\/c\/([A-Z0-9]{24})\.([A-Za-z0-9_-]{43})$/);
+    if (m) { state.cinvite = { token: m[1], ck: m[2] }; return; }
     m = hash.match(/^#\/b\/([A-Z0-9]{8})$/);
     if (m) { state.join = m[1]; return; }
     if (hash.includes('error=')) history.replaceState(null, '', location.pathname + location.search);
@@ -276,21 +279,85 @@
 
   const ownerTabs = [['home', 'tabHome', 'home'], ['people', 'tabPeople', 'people'], ['bills', 'tabBills', 'bills'], ['more', 'tabMore', 'more']];
   const subTabs = [['mybills', 'tabBills', 'bills'], ['subnotices', 'tabNotices', 'bell'], ['more', 'tabMore', 'more']];
-  const parents = { readings: 'home', notices: 'more', invite: 'more' };
+  const collectorTabs = [['collect', 'tabCollect', 'bills'], ['today', 'tabToday', 'check'], ['more', 'tabMore', 'more']];
+  const parents = { readings: 'home', notices: 'more', invite: 'more', collectors: 'more', reports: 'more' };
+  const PAY = 'id, bill_id, amount, method, note, paid_at, collector_id, lbp_amount, lbp_rate';
+
+  const $lens = h('span', { class: 'lens', 'aria-hidden': 'true' });
+  let navList = [];
 
   function drawNav(show) {
-    const list = show === false || !state.user ? null : state.mode === 'owner' && state.bk ? ownerTabs : state.mode === 'subscriber' ? subTabs : null;
+    const list = show === false || !state.user ? null : state.mode === 'owner' && state.bk ? ownerTabs : state.mode === 'collector' ? collectorTabs : state.mode === 'subscriber' ? subTabs : null;
     document.body.classList.toggle('has-nav', !!list);
+    navList = list || [];
     if (!list) { $dock.replaceChildren(); $side.replaceChildren(); return; }
     const active = parents[state.route] || state.route;
     const make = () => list.map(([r, k, ic]) => h('button', {
       type: 'button', class: active === r ? 'tab on' : 'tab', onclick: () => go(r), 'aria-current': active === r ? 'page' : null
     }, icon(ic), h('span', null, t(k))));
-    $dock.replaceChildren(...make());
+    $dock.style.setProperty('--n', String(list.length));
+    $dock.replaceChildren($lens, ...make());
     $side.replaceChildren(...make());
+    const idx = list.findIndex(([r]) => r === active);
+    requestAnimationFrame(() => {
+      $lens.style.opacity = idx < 0 ? '0' : '1';
+      if (idx >= 0) $lens.style.transform = `translateX(${(state.lang === 'ar' ? -idx : idx) * 100}%)`;
+    });
   }
 
-  function defaultRoute() { return state.mode === 'owner' ? 'home' : 'mybills'; }
+  let drag = null;
+  let dragEnd = 0;
+
+  function dragStop() {
+    $dock.classList.remove('dragging');
+    $dock.querySelectorAll('.tab').forEach((el) => el.classList.remove('over'));
+    drag = null;
+  }
+
+  function dragIndex(d) {
+    const near = Math.round(d.pos / d.w);
+    return state.lang === 'ar' ? d.n - 1 - near : near;
+  }
+
+  $dock.addEventListener('pointerdown', (e) => {
+    if (!navList.length || window.innerWidth >= 900 || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    const r = $dock.getBoundingClientRect();
+    drag = { id: e.pointerId, x0: e.clientX, left: r.left + 6, w: (r.width - 12) / navList.length, n: navList.length, moved: false, pos: 0 };
+  });
+
+  $dock.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    if (!drag.moved && Math.abs(e.clientX - drag.x0) < 8) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      try { $dock.setPointerCapture(e.pointerId); } catch {}
+      $dock.classList.add('dragging');
+    }
+    const max = (drag.n - 1) * drag.w;
+    drag.pos = Math.max(0, Math.min(max, e.clientX - drag.left - drag.w / 2));
+    $lens.style.transform = `translateX(${state.lang === 'ar' ? drag.pos - max : drag.pos}px)`;
+    const idx = dragIndex(drag);
+    $dock.querySelectorAll('.tab').forEach((el, i) => el.classList.toggle('over', i === idx));
+  });
+
+  function dragDone(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    const d = drag;
+    dragStop();
+    if (!d.moved) return;
+    dragEnd = Date.now();
+    const target = navList[dragIndex(d)];
+    if (e.type === 'pointerup' && target && target[0] !== (parents[state.route] || state.route)) {
+      if (navigator.vibrate) navigator.vibrate(8);
+      go(target[0]);
+    } else drawNav();
+  }
+
+  $dock.addEventListener('pointerup', dragDone);
+  $dock.addEventListener('pointercancel', dragDone);
+  $dock.addEventListener('click', (e) => { if (Date.now() - dragEnd < 400) { e.stopPropagation(); e.preventDefault(); } }, true);
+
+  function defaultRoute() { return state.mode === 'owner' ? 'home' : state.mode === 'collector' ? 'collect' : 'mybills'; }
 
   function go(r) {
     if (r !== state.route) history.pushState({ r }, '');
@@ -308,38 +375,89 @@
     applyLang();
     try {
       if (!state.user) { drawNav(false); return viewWelcome(); }
+      if (state.cinvite) { drawNav(false); return await handleCollectorInvite(); }
       if (state.invite) { drawNav(false); return await handleInvite(); }
       if (state.join) { drawNav(false); return await viewJoin(state.join); }
       if (!state.mode) { drawNav(false); return state.user.is_anonymous ? viewEnterCode() : viewCreateBusiness(); }
+      applyMode();
       if (state.mode === 'owner' && !state.bk) { drawNav(false); if (!(await ensureKeys())) return; }
       const views = state.mode === 'owner'
-        ? { home: viewHome, people: viewPeople, bills: viewBills, more: viewMore, readings: viewReadings, notices: viewNotices, invite: viewInviteAll }
-        : { mybills: viewMyBills, subnotices: viewSubNotices, more: viewMore };
+        ? { home: viewHome, people: viewPeople, bills: viewBills, more: viewMore, readings: viewReadings, notices: viewNotices, invite: viewInviteAll, collectors: viewCollectors, reports: viewReports }
+        : state.mode === 'collector'
+          ? { collect: viewCollect, today: viewToday, more: viewMore }
+          : { mybills: viewMyBills, subnotices: viewSubNotices, more: viewMore };
       if (!views[state.route]) state.route = defaultRoute();
       drawNav();
+      if (!navigator.onLine && state.route !== 'readings') return viewOffline();
       if (!$app.querySelector('.head')) render(h('div', { class: 'skeleton' }), h('div', { class: 'skeleton short' }));
       await views[state.route]();
-    } catch (e) { fail(e); }
+    } catch (e) {
+      if (isNetErr(e) && state.user && state.mode) return viewOffline();
+      fail(e);
+    }
+  }
+
+  function viewOffline() {
+    render(head(t('app')),
+      h('div', { class: 'card stack center-card' },
+        h('h2', null, t('offline')), h('p', { class: 'muted' }, t('offlineBody')),
+        state.mode === 'owner' && state.route !== 'readings' ? h('button', { type: 'button', class: 'btn primary block', onclick: () => go('readings') }, t('stepReadings')) : null,
+        h('button', { type: 'button', class: 'btn ghost block', onclick: () => route() }, t('retry'))));
   }
 
   async function loadContext() {
     const uid = state.user.id;
-    const [biz, subs] = await Promise.all([
-      state.user.is_anonymous ? Promise.resolve({ data: null }) : sb.from('businesses').select('*').eq('owner_id', uid).maybeSingle(),
-      sb.rpc('my_subscriptions')
-    ]);
-    if (biz.error) throw biz.error;
-    if (subs.error) throw subs.error;
-    state.business = biz.data;
+    let biz; let subs; let roles;
+    try {
+      if (!navigator.onLine) throw new Error('Failed to fetch');
+      [biz, subs, roles] = await Promise.all([
+        state.user.is_anonymous ? Promise.resolve({ data: null }) : sb.from('businesses').select('*').eq('owner_id', uid).maybeSingle(),
+        sb.rpc('my_subscriptions'),
+        sb.rpc('my_collector_roles')
+      ]);
+      for (const r of [biz, subs, roles]) if (r.error) throw r.error;
+      if (biz.data) store.set(`ctx:${uid}`, JSON.stringify(biz.data));
+    } catch (e) {
+      const cached = isNetErr(e) ? store.get(`ctx:${uid}`) : null;
+      if (!cached) throw e;
+      biz = { data: JSON.parse(cached) }; subs = { data: [] }; roles = { data: [] };
+    }
+    state.ownBusiness = biz.data;
     state.subs = subs.data || [];
     for (const s of state.subs) {
       s.sk = store.get(`sk:${s.id}`);
       s.info = (await V.dec(s.sk, s.enc)) || {};
     }
-    if (!state.mode || (state.mode === 'owner' && !state.business) || (state.mode === 'subscriber' && !state.subs.length)) {
-      state.mode = state.business ? 'owner' : state.subs.length ? 'subscriber' : null;
+    state.roles = [];
+    for (const r of roles.data || []) {
+      const bk = ((await V.dec(store.get(`ck:${r.id}`), r.wbk)) || {}).k;
+      if (!bk) continue;
+      r.bk = bk;
+      r.name = ((await V.dec(bk, r.name_enc)) || {}).name || '';
+      state.roles.push(r);
+    }
+    const ok = { owner: !!state.ownBusiness, collector: state.roles.length > 0, subscriber: state.subs.length > 0 };
+    if (!state.mode || !ok[state.mode]) {
+      state.mode = ok.owner ? 'owner' : ok.collector ? 'collector' : ok.subscriber ? 'subscriber' : null;
       state.route = defaultRoute();
     }
+    applyMode();
+  }
+
+  function applyMode() {
+    if (state.mode === 'collector' && state.roles.length) {
+      state.role = state.roles[0];
+      state.business = state.role.business;
+      state.bk = state.role.bk;
+      state.priv = null;
+      return;
+    }
+    if (state.role) { state.bk = null; state.role = null; }
+    state.business = state.ownBusiness;
+  }
+
+  function isNetErr(e) {
+    return !navigator.onLine || /failed to fetch|networkerror|load failed|fetch/i.test((e && e.message) || '');
   }
 
   function hero(sub) {
@@ -364,7 +482,7 @@
     const btn = h('button', { type: 'submit', class: 'btn primary block' }, t('continue'));
     const back = state.user && state.subs.length
       ? h('button', { type: 'button', class: 'link', onclick: () => { state.mode = 'subscriber'; route(); } }, t('back'))
-      : state.user && state.business
+      : state.user && state.ownBusiness
         ? h('button', { type: 'button', class: 'link', onclick: () => { state.mode = 'owner'; route(); } }, t('back'))
         : state.user
           ? h('button', { type: 'button', class: 'link', onclick: signOut }, t('signOut'))
@@ -376,14 +494,16 @@
         const raw = code.value.trim();
         const link = raw.match(/#\/i\/([A-Z0-9]{24})\.([A-Za-z0-9_-]{43})/);
         const joinLink = raw.match(/#\/b\/([A-Z0-9]{8})/);
+        const colLink = raw.match(/#\/c\/([A-Z0-9]{24})\.([A-Za-z0-9_-]{43})/);
         const plain = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
-        if (link) state.invite = { token: link[1], sk: link[2] };
+        if (colLink) state.cinvite = { token: colLink[1], ck: colLink[2] };
+        else if (link) state.invite = { token: link[1], sk: link[2] };
         else if (joinLink) state.join = joinLink[1];
         else if (plain.length === 8) state.join = plain;
         else return toast(t('invalidCode'), 'bad');
         busy(btn, true);
         try { await ensureSession(); await route(); }
-        catch (err) { state.invite = null; state.join = null; fail(err); }
+        catch (err) { state.invite = null; state.join = null; state.cinvite = null; fail(err); }
         finally { busy(btn, false); }
       } },
         h('h2', null, t('enterCode')), h('p', { class: 'muted' }, t('enterCodeHint')),
@@ -419,6 +539,17 @@
     return Object.assign({}, base || {}, {
       name: clean(d.name, 80), phone: clean(d.phone, 20), building: clean(d.building, 80), floor: clean(d.floor, 20)
     });
+  }
+
+  async function handleCollectorInvite() {
+    const inv = state.cinvite;
+    state.cinvite = null;
+    const { data, error } = await sb.rpc('open_collector_invite', { p_token: inv.token });
+    if (error) { fail(error); return route(); }
+    store.set(`ck:${data}`, inv.ck);
+    state.mode = 'collector'; state.route = 'collect';
+    await loadContext();
+    route();
   }
 
   async function handleInvite() {
@@ -599,8 +730,12 @@
   async function ensureKeys() {
     const biz = state.business;
     const cached = store.get(`bk:${biz.id}`);
+    if (cached && !navigator.onLine) { state.bk = cached; return true; }
     const { data: row, error } = await sb.from('business_keys').select('*').eq('business_id', biz.id).maybeSingle();
-    if (error) throw error;
+    if (error) {
+      if (cached && isNetErr(error)) { state.bk = cached; return true; }
+      throw error;
+    }
     if (!row) {
       if (!state.pw) { viewUnlock('setup'); return false; }
       await setupKeys(state.pw);
@@ -706,8 +841,11 @@
   }
 
   async function loadPeople() {
-    const { data, error } = await sb.from('subscribers').select('*').eq('business_id', state.business.id).order('created_at');
-    if (error) throw error;
+    const res = state.mode === 'collector'
+      ? await sb.rpc('collector_subscribers', { p_business: state.business.id })
+      : await sb.from('subscribers').select('*').eq('business_id', state.business.id).order('created_at');
+    if (res.error) throw res.error;
+    const data = res.data || [];
     for (const p of data) {
       if (p.status === 'pending') {
         const o = await V.open(state.priv, p.jk);
@@ -720,6 +858,58 @@
     data.sort((a, b) => a.title.localeCompare(b.title));
     state.people = data;
     return data;
+  }
+
+  async function loadOpenBills() {
+    const { data, error } = await sb.from('bills').select(`*, payments(${PAY})`).eq('business_id', state.business.id).neq('status', 'paid');
+    if (error) throw error;
+    state.openBills = data;
+    state.sent = sentMap();
+    return data;
+  }
+
+  function owed(b) { return Math.round((Number(b.amount) - Number(b.paid_amount)) * 100) / 100; }
+
+  function debtBefore(subId, month) {
+    return state.openBills.filter((b) => b.subscriber_id === subId && b.month < month).reduce((a, b) => a + owed(b), 0);
+  }
+
+  function debtTotal(subId) {
+    return state.openBills.filter((b) => b.subscriber_id === subId).reduce((a, b) => a + owed(b), 0);
+  }
+
+  async function loadCollectors() {
+    if (state.mode !== 'owner') return state.collectors;
+    const { data, error } = await sb.from('collectors').select('*').eq('business_id', state.business.id).order('created_at');
+    if (error) throw error;
+    for (const c of data) {
+      const info = (await V.dec(state.bk, c.name_enc)) || {};
+      c.name = info.name || '—';
+      c.phone = info.phone || '';
+      c.ck = ((await V.dec(state.bk, c.wck)) || {}).k;
+    }
+    state.collectors = data;
+    return data;
+  }
+
+  function collectorName(id) {
+    if (!id) return '';
+    if (state.mode === 'collector') return state.role && state.role.id === id ? state.role.name : t('collector');
+    const c = state.collectors.find((x) => x.id === id);
+    return c ? c.name : t('collector');
+  }
+
+  function sentMap() {
+    try { return JSON.parse(store.get(`sent:${state.business.id}`) || '{}'); } catch { return {}; }
+  }
+
+  function markSent(id) {
+    const m = sentMap();
+    m[id] = Date.now();
+    const keys = Object.keys(m);
+    if (keys.length > 3000) keys.sort((a, b) => m[a] - m[b]).slice(0, keys.length - 3000).forEach((k) => delete m[k]);
+    store.set(`sent:${state.business.id}`, JSON.stringify(m));
+    state.sent = m;
   }
 
   function personName(id) {
@@ -737,87 +927,199 @@
 
   function billMessage(b, p) {
     const biz = state.business;
-    return t('billMsg', {
-      biz: biz.name, month: monthLabel(b.month), name: p.info.name || '', detail: billDetail(b), total: money(b.amount),
-      lbp: lbp(b.amount, biz.lbp_rate), paid: money(b.paid_amount), rem: money(b.amount - b.paid_amount),
-      url: p.sk ? inviteUrl(p) : ''
-    });
+    const old = debtBefore(b.subscriber_id, b.month);
+    return [
+      t('billMsg', {
+        biz: biz.name, month: monthLabel(b.month), name: p.info.name || '', detail: billDetail(b), total: money(b.amount),
+        lbp: lbp(b.amount, biz.lbp_rate), paid: money(b.paid_amount), rem: money(owed(b))
+      }),
+      old > 0 ? t('billMsgOld', { old: money(old), all: money(old + owed(b)) }) : '',
+      p.sk && p.invite_code ? inviteUrl(p) : ''
+    ].filter(Boolean).join('\n');
   }
 
-  async function payBill(b, amount, method, note) {
+  async function payBill(b, amount, method, note, lbpAmount) {
     const row = { bill_id: b.id, amount, method };
     if (note) row.note = await V.enc(state.bk, { t: note });
-    const { error } = await sb.from('payments').insert(row);
+    if (lbpAmount) { row.lbp_amount = lbpAmount; row.lbp_rate = state.business.lbp_rate; }
+    const { data, error } = await sb.from('payments').insert(row).select(PAY).single();
     if (error) throw error;
+    return data;
+  }
+
+  function lbpText(v) { return `${Number(v).toLocaleString('en-US')} ${t('lbpUnit')}`; }
+
+  function payText(pay) {
+    return `${money(pay.amount)}${pay.lbp_amount ? ` (${lbpText(pay.lbp_amount)})` : ''}`;
   }
 
   function billRow(b, after) {
-    const rem = Number(b.amount) - Number(b.paid_amount);
+    const rem = owed(b);
     const name = personName(b.subscriber_id);
+    const old = debtBefore(b.subscriber_id, b.month);
+    const showMonth = state.mode === 'collector' || b.month !== monthDate(state.month);
     const quick = rem > 0 ? h('button', { type: 'button', class: 'btn paid-btn', onclick: async (e) => {
       e.stopPropagation();
       busy(quick, true);
-      try { await payBill(b, Math.round(rem * 100) / 100, 'cash'); toast(t('markedPaid', { name }), 'good'); after(); }
+      try { await payBill(b, rem, 'cash'); toast(t('markedPaid', { name }), 'good'); after(); }
       catch (err) { fail(err); busy(quick, false); }
     } }, icon('check'), t('markPaid')) : h('span', { class: 'pill paid' }, t('paid'));
     return h('div', { class: 'item', role: 'button', tabindex: '0', onclick: () => billSheet(b, after).catch(fail) },
       avatar(name),
       h('div', { class: 'grow' }, h('strong', null, name),
-        h('small', { class: 'muted' }, rem > 0 && Number(b.paid_amount) > 0 ? t('remainingOf', { rem: ltr(money(rem)), total: ltr(money(b.amount)) }) : billDetail(b))),
+        h('small', { class: 'muted' }, showMonth ? `${monthLabel(b.month)} · ` : '',
+          rem > 0 && Number(b.paid_amount) > 0 ? t('remainingOf', { rem: ltr(money(rem)), total: ltr(money(b.amount)) }) : billDetail(b)),
+        old > 0 ? h('small', { class: 'bad' }, t('plusOld', { amt: ltr(money(old)) })) : null,
+        rem > 0 && state.sent[b.id] ? h('small', { class: 'ok' }, `✓ ${t('sentMark')}`) : null),
       h('div', { class: 'end-col' }, h('strong', { class: 'amount' }, money(rem > 0 ? rem : b.amount)), quick));
   }
 
   async function billSheet(b, after) {
     const biz = state.business;
     const p = state.people.find((x) => x.id === b.subscriber_id);
-    const rem = Number(b.amount) - Number(b.paid_amount);
-    const amount = input('amount', { type: 'number', step: '0.01', min: '0.01', max: rem.toFixed(2), value: rem > 0 ? rem.toFixed(2) : '', inputmode: 'decimal' });
+    const rem = owed(b);
+    const old = debtBefore(b.subscriber_id, b.month);
+    const rate = Number(biz.lbp_rate);
+    const fullLbp = Math.round(rem * rate);
+    const amount = input('amount', { type: 'number', step: '0.01', min: '0', value: rem > 0 ? rem.toFixed(2) : '', inputmode: 'decimal' });
+    const amountLabel = h('span', null, t('amount'));
+    const cur = segmented('cur', [['usd', 'USD $'], ['lbp', t('lbpUnit')]], 'usd');
+    cur.addEventListener('change', () => {
+      const isLbp = cur.querySelector('input:checked').value === 'lbp';
+      amount.value = isLbp ? String(fullLbp) : rem.toFixed(2);
+      amount.step = isLbp ? '1000' : '0.01';
+      amountLabel.textContent = isLbp ? t('amountLbp') : t('amount');
+    });
     const note = input('note', { maxlength: 120 });
     const save = h('button', { type: 'submit', class: 'btn primary block' }, t('recordPayment'));
     let close = () => {};
     const pays = [];
     for (const pay of b.payments || []) {
       const n = pay.note ? ((await V.dec(state.bk, pay.note)) || {}).t : '';
-      pays.push(h('div', { class: 'row between pay' },
-        h('span', null, `${money(pay.amount)} · ${t(pay.method)} · ${dateLabel(pay.paid_at)}`, n ? ` · ${n}` : ''),
-        h('button', { type: 'button', class: 'link bad', onclick: async () => {
-          const { error } = await sb.from('payments').delete().eq('id', pay.id);
-          if (error) return fail(error);
-          close(); after();
-        } }, t('undo'))));
+      const who = collectorName(pay.collector_id);
+      const canUndo = state.mode !== 'collector' || pay.collector_id === state.role.id;
+      pays.push(h('div', { class: 'pay' },
+        h('span', null, [payText(pay), t(pay.method), dateLabel(pay.paid_at), who, n].filter(Boolean).join(' · ')),
+        h('div', { class: 'row' },
+          h('button', { type: 'button', class: 'link', onclick: () => receiptSheet(b, pay, p, rem) }, t('receipt')),
+          canUndo ? h('button', { type: 'button', class: 'link bad', onclick: async () => {
+            const { error } = await sb.from('payments').delete().eq('id', pay.id);
+            if (error) return fail(error);
+            close(); after();
+          } }, t('undo')) : null)));
     }
     const form = rem > 0 ? h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
       e.preventDefault();
       const d = formData(e.target);
-      const a = Math.round(num(amount.value) * 100) / 100;
+      let a; let l = null;
+      if (d.cur === 'lbp') {
+        l = Math.round(num(amount.value));
+        const tol = rate * 0.005;
+        if (!(l > 0)) return toast(t('required'), 'bad');
+        if (l > fullLbp + tol) return toast(t('overpayment'), 'bad');
+        a = l >= fullLbp - tol ? rem : Math.round((l / rate) * 100) / 100;
+      } else {
+        a = Math.round(num(amount.value) * 100) / 100;
+        if (a > rem + 0.001) return toast(t('overpayment'), 'bad');
+      }
       if (!(a > 0)) return toast(t('required'), 'bad');
-      if (a > rem + 0.001) return toast(t('overpayment'), 'bad');
       busy(save, true);
-      try { await payBill(b, a, d.method || 'cash', clean(note.value, 120)); close(); toast(t('paymentSaved'), 'good'); after(); }
-      catch (err) { fail(err); } finally { busy(save, false); }
+      try {
+        const pay = await payBill(b, a, d.method || 'cash', clean(note.value, 120), l);
+        close(); toast(t('paymentSaved'), 'good'); after();
+        receiptSheet(b, pay, p, rem - a);
+      } catch (err) { fail(err); } finally { busy(save, false); }
     } },
-      field(t('amount'), amount),
+      cur,
+      h('label', { class: 'field' }, amountLabel, amount),
       segmented('method', [['cash', t('cash')], ['whish', 'Whish'], ['omt', 'OMT'], ['other', t('other')]], 'cash'),
       field(t('note'), note), save) : null;
+    const line = (label, value, cls) => h('div', { class: 'row between' }, h('span', null, label), h('strong', { class: cls || '' }, value));
     close = sheet(p ? p.title : t('bill'), h('div', { class: 'stack' },
       h('div', { class: 'summary' },
         h('small', { class: 'muted' }, monthLabel(b.month)), h('div', null, billDetail(b)),
-        h('div', { class: 'row between' }, h('span', null, t('total')), h('strong', null, ltr(money(b.amount)), ` · ${lbp(b.amount, biz.lbp_rate)} ${t('lbpUnit')}`)),
-        h('div', { class: 'row between' }, h('span', null, t('remaining')), h('strong', { class: `amount ${rem > 0 ? 'bad' : 'ok'}` }, money(rem)))),
+        h('div', { class: 'row between' }, h('span', null, t('total')), h('strong', null, ltr(money(b.amount)), ` · ${lbp(b.amount, rate)} ${t('lbpUnit')}`)),
+        line(t('remaining'), money(rem), `amount ${rem > 0 ? 'bad' : 'ok'}`),
+        old > 0 ? line(t('oldUnpaid'), money(old), 'amount bad') : null,
+        old > 0 ? line(t('totalOwed'), money(old + rem), 'amount') : null),
       pays.length ? h('div', { class: 'stack tight' }, h('small', { class: 'muted' }, t('payments')), pays) : null,
       form,
-      p && p.info.phone ? h('button', { type: 'button', class: 'btn wa block', onclick: () => openExternal(waLink(p.info.phone, billMessage(b, p))) }, icon('chat'), t('sendBill')) : null));
+      p && p.info.phone ? h('button', { type: 'button', class: 'btn wa block', onclick: () => { openExternal(waLink(p.info.phone, billMessage(b, p))); markSent(b.id); } }, icon('chat'), t('sendBill')) : null));
+  }
+
+  function receiptNo(pay) { return String(pay.id).replace(/-/g, '').slice(0, 8).toUpperCase(); }
+
+  function receiptSheet(b, pay, p, remAfter) {
+    const biz = state.business;
+    const name = p ? p.info.name || p.title : '';
+    const who = collectorName(pay.collector_id);
+    const when = new Date(pay.paid_at).toLocaleString(state.lang === 'ar' ? 'ar-LB' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+    const lines = [
+      [t('date'), when], [t('customer'), name], [t('forMonth'), monthLabel(b.month)],
+      [t('amountPaid'), payText(pay)], [t('method'), t(pay.method)],
+      who ? [t('collectedBy'), who] : null,
+      [t('remaining'), money(Math.max(remAfter, 0))]
+    ].filter(Boolean);
+    const title = `${t('receipt')} #${receiptNo(pay)}`;
+    const text = [biz.name, title, ...lines.map(([k, v]) => `${k}: ${v}`)].join('\n');
+    sheet(t('receipt'), h('div', { class: 'stack' },
+      h('div', { class: 'receipt' },
+        h('strong', { class: 'receipt-biz' }, biz.name), h('small', { class: 'muted' }, title),
+        lines.map(([k, v]) => h('div', { class: 'row between' }, h('span', { class: 'muted' }, k), h('strong', null, v)))),
+      h('div', { class: 'actions three' },
+        p && p.info.phone ? h('button', { type: 'button', class: 'act wa', onclick: () => openExternal(waLink(p.info.phone, text)) }, icon('chat'), h('span', null, 'WhatsApp')) : null,
+        h('button', { type: 'button', class: 'act', onclick: () => shareText(text) }, icon('send'), h('span', null, t('share'))),
+        h('button', { type: 'button', class: 'act', onclick: () => window.print() }, icon('bills'), h('span', null, t('print'))))));
+  }
+
+  function sendQueue(bills) {
+    const person = (b) => state.people.find((x) => x.id === b.subscriber_id);
+    let queue = bills.filter((b) => { const p = person(b); return p && p.info.phone && owed(b) > 0; });
+    const fresh = queue.filter((b) => !state.sent[b.id]);
+    if (fresh.length) queue = fresh;
+    let i = 0;
+    const body = h('div', { class: 'stack' });
+    const close = sheet(t('sendBills'), body);
+    const draw = () => {
+      if (i >= queue.length) {
+        body.replaceChildren(h('div', { class: 'empty' }, h('p', null, t('allSent', { n: queue.length })),
+          h('button', { type: 'button', class: 'btn primary', onclick: () => { close(); route(); } }, t('close'))));
+        return;
+      }
+      const b = queue[i];
+      const p = person(b);
+      const bar = h('div', { class: 'bar dark' }, h('i'));
+      bar.firstChild.style.width = `${Math.round((i / queue.length) * 100)}%`;
+      body.replaceChildren(
+        h('small', { class: 'muted' }, t('sendProgress', { i: i + 1, n: queue.length })), bar,
+        h('div', { class: 'summary' }, h('strong', null, p.title),
+          h('span', null, `${monthLabel(b.month)} · `, ltr(money(owed(b) + debtBefore(b.subscriber_id, b.month)))),
+          h('span', { class: 'muted' }, ltr(p.info.phone))),
+        h('button', { type: 'button', class: 'btn wa block', onclick: () => {
+          openExternal(waLink(p.info.phone, billMessage(b, p)));
+          markSent(b.id); i++; draw();
+        } }, icon('chat'), t('openWhatsApp')),
+        h('button', { type: 'button', class: 'btn ghost block', onclick: () => { i++; draw(); } }, t('skip')));
+    };
+    draw();
   }
 
   async function viewHome() {
     const biz = state.business;
     const m = monthDate(state.month);
+    await syncDrafts();
     const [people, tariff, readings, bills] = await Promise.all([
       loadPeople(),
       sb.from('tariffs').select('*').eq('business_id', biz.id).eq('month', m).maybeSingle(),
       sb.from('readings').select('subscriber_id, subscribers!inner(business_id)').eq('month', m).eq('subscribers.business_id', biz.id),
-      sb.from('bills').select('*, payments(id, amount, method, note, paid_at)').eq('business_id', biz.id).eq('month', m)
+      sb.from('bills').select(`*, payments(${PAY})`).eq('business_id', biz.id).eq('month', m),
+      loadOpenBills(),
+      loadCollectors()
     ]);
+    const oldBills = state.openBills.filter((b) => b.month < m).sort((a, b) => owed(b) - owed(a));
+    const oldTotal = oldBills.reduce((a, b) => a + owed(b), 0);
+    const oldSubs = new Set(oldBills.map((b) => b.subscriber_id)).size;
+    const waiting = draftCount();
     for (const r of [tariff, readings, bills]) if (r.error) throw r.error;
     const billable = people.filter((p) => p.active && p.status !== 'pending');
     const metered = billable.filter((p) => p.billing_type === 'metered');
@@ -862,11 +1164,13 @@
             h('small', null, t('collectedOf')),
             h('div', { class: 'hero-num' }, money(paid), h('span', null, ` / ${money(billed)}`)),
             bar,
-            h('div', { class: 'row between' }, h('span', null, t('unpaidCount', { n: unpaid.length })), h('strong', { class: 'amount' }, money(billed - paid)))),
+            h('div', { class: 'row between' }, h('span', null, t('unpaidCount', { n: unpaid.length })), h('strong', { class: 'amount' }, money(billed - paid))),
+            oldTotal > 0 ? h('button', { type: 'button', class: 'old-row', onclick: () => { state.billFilter = 'old'; go('bills'); } },
+              h('span', null, `${t('oldUnpaid')} · ${t('oldUnpaidSubs', { n: oldSubs })}`), h('strong', { class: 'amount' }, money(oldTotal))) : null),
           h('section', { class: 'card flush' },
             h('h3', { class: 'card-title' }, t('thisMonth')),
             step(1, !!tariff.data, t('stepPrice'), tariff.data ? t('priceSet', { kwh: ltr(money(tariff.data.kwh_price)), amp: ltr(money(tariff.data.flat_amp_price)) }) : t('priceNotSet'), null, () => tariffSheet(tariff.data, viewHome)),
-            step(2, metered.length > 0 && readCount === metered.length, t('stepReadings'), metered.length ? t('readingsCount', { n: readCount, total: metered.length }) : t('noMeteredShort'), null, () => go('readings')),
+            step(2, metered.length > 0 && readCount === metered.length, t('stepReadings'), (metered.length ? t('readingsCount', { n: readCount, total: metered.length }) : t('noMeteredShort')) + (waiting ? ` · ${t('draftsWaiting', { n: waiting })}` : ''), null, () => go('readings')),
             step(3, bills.data.length > 0, t('stepBills'), bills.data.length ? t('billsMade', { n: bills.data.length }) : t('billsNotMade'), genBtn))),
         h('div', { class: 'stack' },
           pending.length ? h('section', { class: 'card flush' },
@@ -878,7 +1182,10 @@
           h('section', { class: 'card flush' },
             h('h3', { class: 'card-title' }, t('toCollect'), unpaid.length > 6 ? h('button', { type: 'button', class: 'link', onclick: () => go('bills') }, t('seeAll')) : null),
             unpaid.length ? unpaid.slice(0, 6).map((b) => billRow(b, viewHome))
-              : h('p', { class: 'muted pad' }, bills.data.length ? t('allPaid') : t('noBillsYet'))))));
+              : h('p', { class: 'muted pad' }, bills.data.length ? t('allPaid') : t('noBillsYet'))),
+          oldBills.length ? h('section', { class: 'card flush' },
+            h('h3', { class: 'card-title' }, t('oldUnpaid'), h('button', { type: 'button', class: 'link', onclick: () => { state.billFilter = 'old'; go('bills'); } }, t('seeAll'))),
+            oldBills.slice(0, 5).map((b) => billRow(b, viewHome))) : null)));
   }
 
   function tariffSheet(current, after) {
@@ -974,7 +1281,7 @@
   }
 
   async function viewPeople(filter) {
-    const people = await loadPeople();
+    const [people] = await Promise.all([loadPeople(), loadOpenBills()]);
     const q = (filter || '').toLowerCase();
     const list = people.filter((p) => p.status !== 'pending' && (!q || [p.title, p.info.name, p.info.phone, p.info.building, p.info.meter].some((v) => (v || '').toLowerCase().includes(q))));
     const search = input('q', { type: 'search', placeholder: t('search'), value: filter || '', class: 'search' });
@@ -992,7 +1299,9 @@
           h('small', { class: 'muted' }, [p.label && p.info.name !== p.label ? p.info.name : null, p.info.building, ltr(p.info.phone)].filter(Boolean).join(' · '))),
         h('div', { class: 'end-col' },
           h('span', { class: 'pill' }, `${p.amps}A · ${typeLabel(p.billing_type)}`),
-          h('small', { class: p.status === 'active' ? 'ok' : 'muted' }, p.status === 'active' ? t('linked') : t('notLinked'))))))
+          debtTotal(p.id) > 0
+            ? h('small', { class: 'bad' }, t('owes', { amt: ltr(money(debtTotal(p.id))) }))
+            : h('small', { class: p.status === 'active' ? 'ok' : 'muted' }, p.status === 'active' ? t('linked') : t('notLinked'))))))
         : empty(people.length ? t('noResults') : t('noPeople'), h('button', { type: 'button', class: 'btn primary', onclick: () => personForm(null, again) }, icon('plus'), t('addSubscriber'))),
       h('button', { type: 'button', class: 'fab', onclick: () => personForm(null, again), 'aria-label': t('addSubscriber') }, icon('plus')));
   }
@@ -1014,7 +1323,8 @@
         line(t('phone'), p.info.phone || '—', 'ltr'),
         p.info.building ? line(t('building'), [p.info.building, p.info.floor].filter(Boolean).join(' · ')) : null,
         line(t('subscription'), `${p.amps}A · ${typeLabel(p.billing_type)}`),
-        line(t('appStatus'), p.status === 'active' ? t('linked') : t('notLinked'), p.status === 'active' ? 'ok' : '')),
+        line(t('appStatus'), p.status === 'active' ? t('linked') : t('notLinked'), p.status === 'active' ? 'ok' : ''),
+        debtTotal(p.id) > 0 ? line(t('totalOwed'), money(debtTotal(p.id)), 'amount bad') : null),
       h('small', { class: 'muted' }, t('sendLinkHint')),
       linkButtons(p),
       h('button', { type: 'button', class: 'btn ghost block', onclick: () => { close(); personForm(p, () => viewPeople()); } }, t('edit')),
@@ -1080,74 +1390,389 @@
       h('button', { type: 'button', class: 'btn ghost block', onclick: () => close() }, t('later'))));
   }
 
+  function draftKey(month) { return `rd:${state.business.id}:${month}`; }
+
+  function getDrafts(month) {
+    try { return JSON.parse(store.get(draftKey(month)) || '{}'); } catch { return {}; }
+  }
+
+  function setDrafts(month, d) {
+    if (Object.keys(d).length) store.set(draftKey(month), JSON.stringify(d)); else store.del(draftKey(month));
+  }
+
+  function draftMonths() {
+    const pre = `rd:${state.business.id}:`;
+    const out = [];
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(pre)) out.push(k.slice(pre.length));
+      }
+    } catch {}
+    return out;
+  }
+
+  function draftCount() { return draftMonths().reduce((a, m) => a + Object.keys(getDrafts(m)).length, 0); }
+
+  async function pushReadings(month, values) {
+    const ids = Object.keys(values);
+    if (!ids.length) return 0;
+    const ex = await sb.from('readings').select('id, subscriber_id, value').eq('month', month).in('subscriber_id', ids);
+    if (ex.error) throw ex.error;
+    const have = new Map(ex.data.map((r) => [r.subscriber_id, r]));
+    const inserts = [];
+    let n = 0;
+    for (const id of ids) {
+      const c = have.get(id);
+      if (c && Number(c.value) === values[id]) continue;
+      if (c) {
+        const { error } = await sb.from('readings').update({ value: values[id] }).eq('id', c.id);
+        if (error) throw error;
+      } else inserts.push({ subscriber_id: id, month, value: values[id] });
+      n++;
+    }
+    if (inserts.length) {
+      const { error } = await sb.from('readings').insert(inserts);
+      if (error) throw error;
+    }
+    return n;
+  }
+
+  let syncing = false;
+  async function syncDrafts() {
+    if (syncing || state.mode !== 'owner' || !state.business || !navigator.onLine) return 0;
+    syncing = true;
+    let n = 0;
+    try {
+      for (const month of draftMonths()) {
+        const vals = {};
+        for (const [id, v] of Object.entries(getDrafts(month))) { const x = num(v); if (x >= 0) vals[id] = x; }
+        try {
+          n += await pushReadings(month, vals);
+          store.del(draftKey(month));
+        } catch (e) {
+          if (isNetErr(e)) break;
+          console.error(e);
+          store.del(draftKey(month));
+          toast(t('draftsFailed'), 'bad');
+        }
+      }
+      if (n) toast(t('draftsSent', { n }), 'good');
+    } finally { syncing = false; }
+    return n;
+  }
+
   async function viewReadings() {
     const m = monthDate(state.month);
-    const people = (await loadPeople()).filter((p) => p.active && p.status !== 'pending' && p.billing_type === 'metered');
-    people.sort((a, b) => (a.info.building || '').localeCompare(b.info.building || '') || a.title.localeCompare(b.title));
-    const ids = people.map((p) => p.id);
-    const rd = ids.length ? await sb.from('readings').select('id, subscriber_id, month, value').in('subscriber_id', ids).lte('month', m).order('month', { ascending: false }) : { data: [] };
-    if (rd.error) throw rd.error;
-    const cur = new Map(); const prev = new Map();
-    for (const r of rd.data) {
-      if (r.month === m) cur.set(r.subscriber_id, r);
-      else if (!prev.has(r.subscriber_id)) prev.set(r.subscriber_id, r.value);
+    const cacheKey = `rdc:${state.business.id}:${m}`;
+    let rows; let offline = false;
+    try {
+      if (!navigator.onLine) throw new Error('Failed to fetch');
+      const people = (await loadPeople()).filter((p) => p.active && p.status !== 'pending' && p.billing_type === 'metered');
+      people.sort((a, b) => (a.info.building || '').localeCompare(b.info.building || '') || a.title.localeCompare(b.title));
+      const ids = people.map((p) => p.id);
+      const rd = ids.length ? await sb.from('readings').select('id, subscriber_id, month, value').in('subscriber_id', ids).lte('month', m).order('month', { ascending: false }) : { data: [] };
+      if (rd.error) throw rd.error;
+      const cur = new Map(); const prev = new Map();
+      for (const r of rd.data) {
+        if (r.month === m) cur.set(r.subscriber_id, r);
+        else if (!prev.has(r.subscriber_id)) prev.set(r.subscriber_id, r.value);
+      }
+      rows = people.map((s) => ({
+        id: s.id, title: s.title, sub: [s.info.building, s.info.meter && `#${s.info.meter}`].filter(Boolean).join(' · '),
+        prev: prev.has(s.id) ? Number(prev.get(s.id)) : Number(s.initial_reading),
+        cur: cur.has(s.id) ? Number(cur.get(s.id).value) : null
+      }));
+      store.set(cacheKey, await V.enc(state.bk, rows));
+    } catch (e) {
+      const cached = isNetErr(e) ? await V.dec(state.bk, store.get(cacheKey)) : null;
+      if (!cached) throw e;
+      rows = cached; offline = true;
     }
+    const drafts = getDrafts(m);
     const inputs = [];
-    const rows = people.map((s) => {
-      const p = prev.has(s.id) ? Number(prev.get(s.id)) : Number(s.initial_reading);
-      const c = cur.get(s.id);
-      const inp = input(`r_${s.id}`, { type: 'number', step: '0.01', min: '0', inputmode: 'decimal', enterkeyhint: 'next', value: c ? c.value : '', placeholder: String(p), class: 'reading-input' });
+    const items = rows.map((r) => {
+      const start = drafts[r.id] !== undefined ? drafts[r.id] : r.cur !== null ? r.cur : '';
+      const inp = input(`r_${r.id}`, { type: 'number', step: '0.01', min: '0', inputmode: 'decimal', enterkeyhint: 'next', value: start, placeholder: String(r.prev), class: 'reading-input' });
       const diff = h('small', { class: 'muted' });
       const upd = () => {
         const v = num(inp.value);
-        diff.textContent = inp.value === '' ? `${t('prev')}: ${p}` : v < p ? t('lowerThanPrev') : `+${(v - p).toFixed(1)} ${t('kwh')}`;
-        diff.className = inp.value !== '' && v < p ? 'bad' : 'muted';
+        diff.textContent = inp.value === '' ? `${t('prev')}: ${r.prev}` : v < r.prev ? t('lowerThanPrev') : `+${(v - r.prev).toFixed(1)} ${t('kwh')}`;
+        diff.className = inp.value !== '' && v < r.prev ? 'bad' : 'muted';
       };
-      inp.addEventListener('input', upd); upd();
-      inputs.push({ s, inp, c });
-      return h('div', { class: 'item static' }, avatar(s.title),
-        h('div', { class: 'grow' }, h('strong', null, s.title), h('small', { class: 'muted' }, [s.info.building, s.info.meter && `#${s.info.meter}`].filter(Boolean).join(' · '))),
+      inp.addEventListener('input', () => {
+        upd();
+        if (inp.value === '' || (r.cur !== null && num(inp.value) === r.cur)) delete drafts[r.id]; else drafts[r.id] = inp.value;
+        setDrafts(m, drafts);
+      });
+      upd();
+      inputs.push({ r, inp });
+      return h('div', { class: 'item static' }, avatar(r.title),
+        h('div', { class: 'grow' }, h('strong', null, r.title), h('small', { class: 'muted' }, r.sub)),
         h('div', { class: 'reading' }, inp, diff));
     });
     const save = h('button', { type: 'button', class: 'btn primary block sticky', onclick: async () => {
+      const vals = {};
+      for (const { r, inp } of inputs) {
+        if (inp.value === '') continue;
+        const v = num(inp.value);
+        if (!(v >= 0) || (r.cur !== null && r.cur === v)) continue;
+        vals[r.id] = v;
+      }
+      if (!navigator.onLine) return toast(t('savedOffline', { n: Object.keys(vals).length }), 'warn');
       busy(save, true);
-      let n = 0;
       try {
-        const inserts = [];
-        for (const { s, inp, c } of inputs) {
-          if (inp.value === '') continue;
-          const v = num(inp.value);
-          if (!(v >= 0) || (c && Number(c.value) === v)) continue;
-          if (c) { const { error } = await sb.from('readings').update({ value: v }).eq('id', c.id); if (error) throw error; }
-          else inserts.push({ subscriber_id: s.id, month: m, value: v });
-          n++;
-        }
-        if (inserts.length) { const { error } = await sb.from('readings').insert(inserts); if (error) throw error; }
+        const n = await pushReadings(m, vals);
+        setDrafts(m, {});
         toast(t('readingsSaved', { n }), 'good');
         go('home');
-      } catch (err) { fail(err); } finally { busy(save, false); }
+      } catch (err) {
+        if (isNetErr(err)) toast(t('savedOffline', { n: Object.keys(vals).length }), 'warn'); else fail(err);
+      } finally { busy(save, false); }
     } }, t('saveReadings'));
     render(head(t('stepReadings'), monthSwitch(viewReadings), 'home'),
-      rows.length ? h('div', { class: 'card flush grid-list' }, rows) : empty(t('noMetered')),
-      rows.length ? save : null);
+      offline ? h('p', { class: 'notice-bar' }, t('offlineList')) : null,
+      items.length ? h('div', { class: 'card flush grid-list' }, items) : empty(t('noMetered')),
+      items.length ? save : null);
   }
 
   async function viewBills(status) {
-    status = status || 'all';
+    status = status || state.billFilter || 'all';
+    state.billFilter = null;
     const biz = state.business;
     const m = monthDate(state.month);
-    await loadPeople();
-    const { data, error } = await sb.from('bills').select('*, payments(id, amount, method, note, paid_at)').eq('business_id', biz.id).eq('month', m);
-    if (error) throw error;
+    const [, res] = await Promise.all([
+      loadPeople(),
+      sb.from('bills').select(`*, payments(${PAY})`).eq('business_id', biz.id).eq('month', m),
+      loadOpenBills(),
+      loadCollectors()
+    ]);
+    if (res.error) throw res.error;
+    const data = res.data;
+    const oldBills = state.openBills.filter((b) => b.month < m);
     const again = () => viewBills(status).catch(fail);
     const order = { unpaid: 0, partial: 1, paid: 2 };
-    const list = data.filter((b) => status === 'all' || b.status === status)
-      .sort((a, b) => order[a.status] - order[b.status] || personName(a.subscriber_id).localeCompare(personName(b.subscriber_id)));
-    const count = (s) => data.filter((b) => s === 'all' || b.status === s).length;
+    const byName = (a, b) => personName(a.subscriber_id).localeCompare(personName(b.subscriber_id));
+    const list = status === 'old'
+      ? oldBills.slice().sort((a, b) => byName(a, b) || a.month.localeCompare(b.month))
+      : data.filter((b) => status === 'all' || b.status === status).sort((a, b) => order[a.status] - order[b.status] || byName(a, b));
+    const count = (s) => (s === 'old' ? oldBills.length : data.filter((b) => s === 'all' || b.status === s).length);
+    const toSend = list.filter((b) => owed(b) > 0);
     render(head(t('tabBills'), monthSwitch(again)),
-      h('div', { class: 'chips' }, ['all', 'unpaid', 'partial', 'paid'].map((f) => h('button', { type: 'button', class: f === status ? 'chip on' : 'chip', onclick: () => viewBills(f).catch(fail) }, `${t(f)} ${count(f)}`))),
+      h('div', { class: 'chips' }, ['all', 'unpaid', 'partial', 'paid', 'old'].map((f) => h('button', {
+        type: 'button', class: `${f === status ? 'chip on' : 'chip'}${f === 'old' && oldBills.length ? ' alert' : ''}`, onclick: () => viewBills(f).catch(fail)
+      }, `${f === 'old' ? t('oldUnpaid') : t(f)} ${count(f)}`))),
+      toSend.length ? h('button', { type: 'button', class: 'btn wa block', onclick: () => sendQueue(toSend) }, icon('chat'), t('sendAll', { n: toSend.length })) : null,
       list.length ? h('div', { class: 'card flush grid-list' }, list.map((b) => billRow(b, again)))
-        : empty(data.length ? t('noResults') : t('noBills'), !data.length ? h('button', { type: 'button', class: 'btn primary', onclick: () => go('home') }, t('goHome')) : null));
+        : empty(data.length || status === 'old' ? t('noResults') : t('noBills'), !data.length && status !== 'old' ? h('button', { type: 'button', class: 'btn primary', onclick: () => go('home') }, t('goHome')) : null));
+  }
+
+  function collectorUrl(c) { return `${appUrl()}#/c/${c.invite_code}.${c.ck}`; }
+
+  function collectorLinkButtons(c) {
+    const msg = t('collectorMsg', { biz: state.business.name, name: c.name, url: collectorUrl(c) });
+    return h('div', { class: 'actions three' },
+      h('button', { type: 'button', class: 'act wa', onclick: () => (c.phone ? openExternal(waLink(c.phone, msg)) : shareText(msg)) }, icon('chat'), h('span', null, 'WhatsApp')),
+      c.phone ? h('a', { class: 'act', href: smsLink(c.phone, msg) }, icon('send'), h('span', null, 'SMS')) : null,
+      h('button', { type: 'button', class: 'act', onclick: () => copyText(collectorUrl(c)) }, icon('copy'), h('span', null, t('copyLink'))));
+  }
+
+  function startOfToday() {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }
+
+  async function viewCollectors() {
+    const biz = state.business;
+    const [list, pays] = await Promise.all([
+      loadCollectors(),
+      sb.from('payments').select('amount, collector_id, bills!inner(business_id)').eq('bills.business_id', biz.id).gte('paid_at', startOfToday())
+    ]);
+    if (pays.error) throw pays.error;
+    const today = (id) => pays.data.filter((x) => x.collector_id === id).reduce((a, x) => a + Number(x.amount), 0);
+    render(head(t('collectors'), h('button', { type: 'button', class: 'btn primary small', onclick: collectorForm }, icon('plus'), t('add')), 'more'),
+      h('p', { class: 'muted' }, t('collectorsBody')),
+      list.length ? h('div', { class: 'card flush' }, list.map((c) => h('div', { class: `item ${c.active ? '' : 'dim'}`, role: 'button', tabindex: '0', onclick: () => collectorSheet(c) },
+        avatar(c.name),
+        h('div', { class: 'grow' }, h('strong', null, c.name),
+          h('small', { class: 'muted' }, [ltr(c.phone), !c.active ? t('collectorOff') : c.devices > 0 ? t('linked') : t('notLinked')].filter(Boolean).join(' · '))),
+        h('div', { class: 'end-col' }, h('strong', { class: 'amount' }, money(today(c.id))), h('small', { class: 'muted' }, t('tabToday'))))))
+        : empty(t('noCollectors'), h('button', { type: 'button', class: 'btn primary', onclick: collectorForm }, icon('plus'), t('addCollector'))));
+  }
+
+  function collectorForm() {
+    const save = h('button', { type: 'submit', class: 'btn primary block' }, t('saveAndSend'));
+    const close = sheet(t('addCollector'), h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
+      e.preventDefault();
+      const d = formData(e.target);
+      const name = clean(d.name, 80);
+      if (!name) return toast(t('nameRequired'), 'bad');
+      if (d.phone && !validPhone(d.phone)) return toast(t('phoneRequired'), 'bad');
+      busy(save, true);
+      try {
+        const ck = V.genKey();
+        const res = await sb.from('collectors').insert({
+          business_id: state.business.id, name_enc: await V.enc(state.bk, { name, phone: clean(d.phone, 20) }),
+          wbk: await V.enc(ck, { k: state.bk }), wck: await V.enc(state.bk, { k: ck })
+        }).select().single();
+        if (res.error) throw res.error;
+        close();
+        await viewCollectors();
+        const c = Object.assign(res.data, { name, phone: clean(d.phone, 20), ck });
+        sheet(t('sendLinkTitle'), h('div', { class: 'stack' }, h('p', { class: 'muted' }, t('collectorLinkBody', { name })), collectorLinkButtons(c)));
+      } catch (err) { fail(err); } finally { busy(save, false); }
+    } },
+      field(t('collectorNameLabel'), input('name', { required: true, maxlength: 80 })),
+      field(t('phone'), input('phone', { type: 'tel', maxlength: 20, inputmode: 'tel', placeholder: '03 123 456' })),
+      h('p', { class: 'muted small' }, t('collectorsBody')),
+      save));
+  }
+
+  function collectorSheet(c) {
+    const close = sheet(c.name, h('div', { class: 'stack' },
+      h('small', { class: 'muted' }, t('collectorLinkBody', { name: c.name })),
+      collectorLinkButtons(c),
+      h('button', { type: 'button', class: 'btn ghost block', onclick: async () => {
+        const { error } = await sb.from('collectors').update({ active: !c.active }).eq('id', c.id);
+        if (error) return fail(error);
+        close(); viewCollectors();
+      } }, c.active ? t('stopCollector') : t('allowCollector')),
+      h('div', { class: 'grid2' },
+        h('button', { type: 'button', class: 'btn ghost', onclick: async () => {
+          if (!(await confirmBox(t('resetConfirm'), t('resetAccess')))) return;
+          const { error } = await sb.rpc('reset_collector_access', { p_collector: c.id });
+          if (error) return fail(error);
+          close(); toast(t('resetDone'), 'good'); viewCollectors();
+        } }, t('resetAccess')),
+        h('button', { type: 'button', class: 'btn danger ghost', onclick: async () => {
+          if (!(await confirmBox(t('deleteCollector', { name: c.name })))) return;
+          const { error } = await sb.from('collectors').delete().eq('id', c.id);
+          if (error) return fail(error);
+          close(); viewCollectors();
+        } }, t('delete')))));
+  }
+
+  async function viewCollect(filter) {
+    await Promise.all([loadPeople(), loadOpenBills()]);
+    const q = (filter || '').toLowerCase();
+    const person = (b) => state.people.find((x) => x.id === b.subscriber_id) || { title: '', info: {} };
+    const list = state.openBills.filter((b) => {
+      const p = person(b);
+      return !q || [p.title, p.info.name, p.info.phone, p.info.building].some((v) => (v || '').toLowerCase().includes(q));
+    }).sort((a, b) => (person(a).info.building || '').localeCompare(person(b).info.building || '') || person(a).title.localeCompare(person(b).title) || a.month.localeCompare(b.month));
+    const total = state.openBills.reduce((a, b) => a + owed(b), 0);
+    const search = input('q', { type: 'search', placeholder: t('search'), value: filter || '', class: 'search' });
+    let tmr;
+    search.addEventListener('input', () => { clearTimeout(tmr); tmr = setTimeout(() => viewCollect(search.value).then(() => {
+      const s = $app.querySelector('input[name=q]'); if (s) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
+    }).catch(fail), 250); });
+    const again = () => viewCollect(filter).catch(fail);
+    render(head(state.business.name, h('button', { type: 'button', class: 'icon-btn', onclick: again, 'aria-label': t('refresh') }, '↻')),
+      h('section', { class: 'hero-card' }, h('small', null, t('toCollect')), h('div', { class: 'hero-num' }, money(total)),
+        h('div', { class: 'row between' }, h('span', null, t('unpaidCount', { n: state.openBills.length })), h('span', null, state.role.name))),
+      search,
+      list.length ? h('div', { class: 'card flush grid-list' }, list.map((b) => billRow(b, again))) : empty(q ? t('noResults') : t('allPaid')));
+  }
+
+  async function viewToday() {
+    const [, res] = await Promise.all([
+      loadPeople(),
+      sb.from('payments').select(`${PAY}, bills(subscriber_id, month)`).eq('collector_id', state.role.id).gte('paid_at', startOfToday()).order('paid_at', { ascending: false })
+    ]);
+    if (res.error) throw res.error;
+    const pays = res.data;
+    const total = pays.reduce((a, x) => a + Number(x.amount), 0);
+    const usd = pays.filter((x) => !x.lbp_amount).reduce((a, x) => a + Number(x.amount), 0);
+    const lbpSum = pays.reduce((a, x) => a + Number(x.lbp_amount || 0), 0);
+    render(head(t('tabToday'), h('button', { type: 'button', class: 'icon-btn', onclick: () => viewToday().catch(fail), 'aria-label': t('refresh') }, '↻')),
+      h('section', { class: 'hero-card clear' }, h('small', null, t('collectedToday')), h('div', { class: 'hero-num' }, money(total)),
+        h('div', { class: 'row between' }, h('span', null, t('usdReceived')), h('strong', { class: 'amount' }, money(usd))),
+        h('div', { class: 'row between' }, h('span', null, t('lbpReceived')), h('strong', { class: 'amount' }, lbpText(lbpSum)))),
+      pays.length ? h('div', { class: 'card flush' }, pays.map((x) => h('div', { class: 'item static' },
+        avatar(personName(x.bills && x.bills.subscriber_id)),
+        h('div', { class: 'grow' }, h('strong', null, personName(x.bills && x.bills.subscriber_id)),
+          h('small', { class: 'muted' }, [x.bills ? monthLabel(x.bills.month) : '', t(x.method), new Date(x.paid_at).toLocaleTimeString(state.lang === 'ar' ? 'ar-LB' : 'en-GB', { hour: '2-digit', minute: '2-digit' })].filter(Boolean).join(' · '))),
+        h('div', { class: 'end-col' }, h('strong', { class: 'amount' }, payText(x)),
+          h('button', { type: 'button', class: 'link bad', onclick: async () => {
+            const { error } = await sb.from('payments').delete().eq('id', x.id);
+            if (error) return fail(error);
+            viewToday().catch(fail);
+          } }, t('undo'))))))
+        : empty(t('nothingToday')));
+  }
+
+  function csvCell(v) {
+    let s = v === null || v === undefined ? '' : String(v);
+    if (/^[=+\-@\t\r]/.test(s) && Number.isNaN(Number(s))) s = `'${s}`;
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+
+  async function downloadCsv(name, rows) {
+    const text = `﻿${rows.map((r) => r.map(csvCell).join(',')).join('\r\n')}`;
+    const file = new File([text], name, { type: 'text/csv' });
+    if (navigator.canShare && navigator.canShare({ files: [file] }) && window.matchMedia('(pointer: coarse)').matches) {
+      try { await navigator.share({ files: [file] }); } catch {}
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const a = h('a', { href: url, download: name });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
+  async function viewReports() {
+    const biz = state.business;
+    const m = monthDate(state.month);
+    const [people, res] = await Promise.all([
+      loadPeople(),
+      sb.from('bills').select(`*, payments(${PAY})`).eq('business_id', biz.id).eq('month', m),
+      loadOpenBills(),
+      loadCollectors()
+    ]);
+    if (res.error) throw res.error;
+    const bills = res.data;
+    const pays = bills.flatMap((b) => (b.payments || []).map((x) => Object.assign({ bill: b }, x)));
+    const sum = (list, f) => list.reduce((a, x) => a + Number(f(x) || 0), 0);
+    const billed = sum(bills, (b) => b.amount);
+    const collected = sum(bills, (b) => b.paid_amount);
+    const oldTotal = sum(state.openBills.filter((b) => b.month < m), owed);
+    const person = (id) => people.find((x) => x.id === id) || { title: '—', info: {}, label: '' };
+    const stat = (label, value, cls) => h('div', { class: 'item static' }, h('div', { class: 'grow' }, h('span', null, label)), h('strong', { class: `amount ${cls || ''}` }, value));
+    const methods = ['cash', 'whish', 'omt', 'other'].map((k) => [t(k), sum(pays.filter((x) => x.method === k), (x) => x.amount)]).filter(([, v]) => v > 0);
+    const whoIds = [...new Set(pays.map((x) => x.collector_id || ''))];
+    const who = whoIds.map((id) => [id ? collectorName(id) : t('me'), sum(pays.filter((x) => (x.collector_id || '') === id), (x) => x.amount)]);
+    const exportBills = () => downloadCsv(`ishtirak-bills-${state.month}.csv`, [
+      [t('subName'), t('privateNameShort'), t('phone'), t('building'), t('floor'), t('meterNumber'), t('amps'), t('billingType'), t('prev'), t('currentReading'), 'kWh', t('total'), t('paid'), t('remaining'), t('status'), t('oldUnpaid')]
+    ].concat(bills.map((b) => {
+      const p = person(b.subscriber_id);
+      return [p.info.name, p.label, p.info.phone, p.info.building, p.info.floor, p.info.meter, b.amps, typeLabel(b.billing_type), b.prev_reading, b.curr_reading, b.kwh, b.amount, b.paid_amount, owed(b), t(b.status), debtBefore(b.subscriber_id, b.month) || ''];
+    })));
+    const exportPays = async () => {
+      const rows = [[t('date'), t('subName'), t('forMonth'), t('amount'), t('amountLbp'), t('method'), t('collectedBy'), t('note')]];
+      for (const x of pays.sort((a, b) => a.paid_at.localeCompare(b.paid_at))) {
+        const n = x.note ? ((await V.dec(state.bk, x.note)) || {}).t : '';
+        rows.push([x.paid_at.slice(0, 16).replace('T', ' '), person(x.bill.subscriber_id).title, state.month, x.amount, x.lbp_amount || '', t(x.method), x.collector_id ? collectorName(x.collector_id) : t('me'), n || '']);
+      }
+      return downloadCsv(`ishtirak-payments-${state.month}.csv`, rows);
+    };
+    render(head(t('reports'), monthSwitch(() => viewReports().catch(fail)), 'more'),
+      h('div', { class: 'cols' },
+        h('div', { class: 'stack' },
+          h('section', { class: 'card flush' }, h('h3', { class: 'card-title' }, t('summary')),
+            stat(t('billedTotal'), money(billed)), stat(t('collectedTotal'), money(collected), 'ok'),
+            stat(t('unpaidTotal'), money(billed - collected), billed - collected > 0 ? 'bad' : ''),
+            stat(t('oldUnpaid'), money(oldTotal), oldTotal > 0 ? 'bad' : ''),
+            stat(t('billsCount'), String(bills.length)), stat(t('kwhTotal'), String(Math.round(sum(bills, (b) => b.kwh))))),
+          h('button', { type: 'button', class: 'btn ghost block', onclick: exportBills }, icon('bills'), t('exportBills')),
+          h('button', { type: 'button', class: 'btn ghost block', onclick: () => exportPays().catch(fail) }, icon('bills'), t('exportPayments'))),
+        h('div', { class: 'stack' },
+          h('section', { class: 'card flush' }, h('h3', { class: 'card-title' }, t('byMethod')),
+            methods.length ? methods.map(([k, v]) => stat(k, money(v))) : h('p', { class: 'muted pad' }, t('noPaymentsYet'))),
+          h('section', { class: 'card flush' }, h('h3', { class: 'card-title' }, t('byCollector')),
+            who.length ? who.map(([k, v]) => stat(k, money(v))) : h('p', { class: 'muted pad' }, t('noPaymentsYet'))))));
   }
 
   function viewInviteAll() {
@@ -1209,7 +1834,7 @@
     const active = state.subs.filter((s) => s.status === 'active');
     const waiting = state.subs.filter((s) => s.status === 'pending');
     const ids = active.map((s) => s.id);
-    const res = ids.length ? await sb.from('bills').select('*, payments(amount, method, paid_at)').in('subscriber_id', ids).order('month', { ascending: false }).limit(60) : { data: [] };
+    const res = ids.length ? await sb.from('bills').select('*, payments(amount, method, paid_at, lbp_amount)').in('subscriber_id', ids).order('month', { ascending: false }).limit(60) : { data: [] };
     if (res.error) throw res.error;
     render(head(t('tabBills'), h('button', { type: 'button', class: 'icon-btn', onclick: refresh, 'aria-label': t('refresh') }, '↻')),
       waiting.map((s) => h('section', { class: 'card stack center-card' },
@@ -1219,6 +1844,8 @@
         const biz = s.business;
         const mine = res.data.filter((b) => b.subscriber_id === s.id);
         const due = mine.reduce((a, b) => a + Number(b.amount) - Number(b.paid_amount), 0);
+        const latest = mine.length ? mine[0].month : '';
+        const oldDue = mine.filter((b) => b.month < latest).reduce((a, b) => a + Number(b.amount) - Number(b.paid_amount), 0);
         return h('div', { class: 'cols' },
           h('section', { class: `hero-card ${due > 0 ? '' : 'clear'}` },
             h('small', null, biz.name),
@@ -1226,6 +1853,7 @@
             h('div', { class: 'row between' },
               h('span', null, due > 0 ? `≈ ${lbp(due, biz.lbp_rate)} ${t('lbpUnit')}` : t('nothingDue')),
               h('span', null, `${s.amps}A · ${typeLabel(s.billing_type)}`)),
+            oldDue > 0 ? h('div', { class: 'old-row' }, h('span', null, t('includesOld', { amt: ltr(money(oldDue)) }))) : null,
             biz.phone ? h('a', { class: 'btn glass block', href: `tel:+${intlPhone(biz.phone)}` }, icon('phone'), t('callOwner')) : null),
           h('section', { class: 'card flush' },
             h('h3', { class: 'card-title' }, t('history')),
@@ -1236,7 +1864,7 @@
                 b.billing_type === 'metered' ? h('small', null, t('readingLine', { prev: Number(b.prev_reading), curr: Number(b.curr_reading) })) : null,
                 h('small', null, billDetail(b)),
                 h('small', { class: 'muted' }, `≈ ${lbp(b.amount, biz.lbp_rate)} ${t('lbpUnit')}`),
-                (b.payments || []).map((p) => h('small', { class: 'ok' }, `✓ ${money(p.amount)} · ${t(p.method)} · ${dateLabel(p.paid_at)}`)))))
+                (b.payments || []).map((p) => h('small', { class: 'ok' }, `✓ ${payText(p)} · ${t(p.method)} · ${dateLabel(p.paid_at)}`)))))
               : h('p', { class: 'muted pad' }, t('noSubscriptionBills'))));
       }));
   }
@@ -1281,6 +1909,8 @@
     if (state.mode === 'owner') {
       const biz = state.business;
       parts.push(h('section', { class: 'card flush' },
+        menuRow(t('collectors'), t('collectorsShort'), () => go('collectors'), 'people'),
+        menuRow(t('reports'), t('reportsShort'), () => go('reports'), 'bills'),
         menuRow(t('inviteAll'), t('inviteAllShort'), () => go('invite'), 'send'),
         menuRow(t('tabNotices'), t('noticesShort'), () => go('notices'), 'bell'),
         menuRow(t('stepPrice'), monthLabel(monthDate(state.month)), async () => {
@@ -1289,11 +1919,16 @@
         }, 'tag'),
         menuRow(t('business'), [biz.name, ltr(biz.phone)].filter(Boolean).join(' · '), bizSheet, 'bolt'),
         state.subs.length ? menuRow(t('switchToSubscriber'), null, () => { state.mode = 'subscriber'; go('mybills'); }, 'home') : null));
+    } else if (state.mode === 'collector') {
+      parts.push(h('section', { class: 'card flush' },
+        menuRow(state.business.name, state.role.name, null, 'bolt'),
+        state.subs.length ? menuRow(t('switchToSubscriber'), null, () => { state.mode = 'subscriber'; go('mybills'); }, 'home') : null));
     } else {
       parts.push(h('section', { class: 'card flush' },
         state.subs.filter((s) => s.status === 'active').map((s) => menuRow(t('myDetails'), [s.info.name, ltr(s.info.phone), s.business.name].filter(Boolean).join(' · '), () => myInfoSheet(s), 'people')),
         menuRow(t('addGenerator'), t('addGeneratorShort'), viewEnterCode, 'plus'),
-        state.business ? menuRow(t('switchToOwner'), null, () => { state.mode = 'owner'; go('home'); }, 'bolt') : null));
+        state.ownBusiness ? menuRow(t('switchToOwner'), null, () => { state.mode = 'owner'; go('home'); }, 'bolt') : null,
+        state.roles.length ? menuRow(t('switchToCollector'), null, () => { state.mode = 'collector'; go('collect'); }, 'check') : null));
     }
     parts.push(h('section', { class: 'card flush' },
       menuRow(t('language'), state.lang === 'ar' ? 'العربية' : 'English', switchLang, 'globe'),
@@ -1319,7 +1954,7 @@
       try {
         const { data, error } = await sb.from('businesses').update({ name: clean(d.name, 120), phone: clean(d.phone, 30), area: clean(d.area, 120) || null, lbp_rate: rate }).eq('id', biz.id).select().single();
         if (error) throw error;
-        state.business = data; close(); toast(t('saved'), 'good'); viewMore();
+        state.ownBusiness = data; state.business = data; close(); toast(t('saved'), 'good'); viewMore();
       } catch (err) { fail(err); } finally { busy(save, false); }
     } },
       field(t('businessName'), input('name', { required: true, maxlength: 120, value: biz.name })),
@@ -1330,9 +1965,12 @@
   }
 
   async function signOut() {
-    if (state.business) store.del(`bk:${state.business.id}`);
+    if (state.ownBusiness) store.del(`bk:${state.ownBusiness.id}`);
     await sb.auth.signOut();
-    Object.assign(state, { user: null, pw: null, business: null, bk: null, priv: null, subs: [], mode: null, people: [], invite: null, join: null });
+    Object.assign(state, {
+      user: null, pw: null, business: null, ownBusiness: null, bk: null, priv: null, subs: [], roles: [], role: null, mode: null,
+      people: [], collectors: [], openBills: [], invite: null, join: null, cinvite: null
+    });
     if (location.hash) history.replaceState(null, '', location.pathname + location.search);
     route();
   }
@@ -1341,12 +1979,25 @@
     if (holdBoot && !force) return;
     const { data } = await sb.auth.getSession();
     state.user = data.session ? data.session.user : null;
+    if (!state.user && !navigator.onLine) state.user = storedUser();
     try {
-      if (!state.user && (state.invite || state.join)) await ensureSession();
+      if (!state.user && (state.invite || state.join || state.cinvite)) await ensureSession();
       else if (state.user) await loadContext();
-    } catch (e) { state.invite = null; state.join = null; fail(e); }
+    } catch (e) { state.invite = null; state.join = null; state.cinvite = null; fail(e); }
     route();
   }
+
+  function storedUser() {
+    try {
+      const ref = new URL(cfg.supabaseUrl).hostname.split('.')[0];
+      const raw = JSON.parse(store.get(`sb-${ref}-auth-token`) || 'null');
+      return raw && raw.user ? raw.user : null;
+    } catch { return null; }
+  }
+
+  window.addEventListener('online', () => {
+    syncDrafts().then((n) => { if (n && state.route === 'home') route(); }).catch(() => {});
+  });
 
   sb.auth.onAuthStateChange((event, session) => {
     const uid = session ? session.user.id : null;
