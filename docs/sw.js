@@ -1,5 +1,5 @@
-const CACHE = 'ishtirak-v6';
-const SHELL = ['./', 'index.html', 'css/app.css', 'js/config.js', 'js/i18n.js', 'js/vault.js', 'js/app.js', 'vendor/supabase.js', 'manifest.webmanifest', 'icons/icon-192.png'];
+const CACHE = 'ishtirak-v7';
+const SHELL = ['./', 'index.html', 'css/app.css', 'js/config.js', 'js/i18n.js', 'js/vault.js', 'js/app.js', 'vendor/supabase.js', 'manifest.webmanifest', 'icons/icon-192.png', 'fonts/plex-latin-400.woff2', 'fonts/plex-latin-500.woff2', 'fonts/plex-latin-700.woff2', 'fonts/plex-arabic-400.woff2', 'fonts/plex-arabic-500.woff2', 'fonts/plex-arabic-700.woff2'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

@@ -109,9 +109,24 @@
     return svg;
   }
 
+  const $fab = document.getElementById('fab-slot');
+
+  function sep() { return state.lang === 'ar' ? '، ' : ', '; }
+
   function render(...nodes) {
-    $app.replaceChildren(h('div', { class: 'view' }, nodes));
+    const list = nodes.flat(3).filter((n) => n !== null && n !== undefined && n !== false);
+    const fabs = list.filter((n) => n instanceof Element && n.classList.contains('fab'));
+    $app.replaceChildren(h('div', { class: 'view' }, list.filter((n) => !fabs.includes(n))));
+    $fab.replaceChildren(...fabs);
     window.scrollTo(0, 0);
+  }
+
+  function meter(pct) {
+    const n = 24;
+    const on = pct > 0 ? Math.max(1, Math.round(pct * n)) : 0;
+    const el = h('div', { class: 'meter', role: 'img', 'aria-label': `${Math.round(pct * 100)}%` });
+    for (let i = 0; i < n; i++) el.append(h('i', { class: i < on ? 'on' : null }));
+    return el;
   }
 
   let toastTimer;
@@ -967,7 +982,7 @@
     return h('div', { class: 'item', role: 'button', tabindex: '0', onclick: () => billSheet(b, after).catch(fail) },
       avatar(name),
       h('div', { class: 'grow' }, h('strong', null, name),
-        h('small', { class: 'muted' }, showMonth ? `${monthLabel(b.month)} · ` : '',
+        h('small', { class: 'muted' }, showMonth ? `${monthLabel(b.month)}${sep()}` : '',
           rem > 0 && Number(b.paid_amount) > 0 ? t('remainingOf', { rem: ltr(money(rem)), total: ltr(money(b.amount)) }) : billDetail(b)),
         old > 0 ? h('small', { class: 'bad' }, t('plusOld', { amt: ltr(money(old)) })) : null,
         rem > 0 && state.sent[b.id] ? h('small', { class: 'ok' }, `✓ ${t('sentMark')}`) : null),
@@ -999,7 +1014,7 @@
       const who = collectorName(pay.collector_id);
       const canUndo = state.mode !== 'collector' || pay.collector_id === state.role.id;
       pays.push(h('div', { class: 'pay' },
-        h('span', null, [payText(pay), t(pay.method), dateLabel(pay.paid_at), who, n].filter(Boolean).join(' · ')),
+        h('span', null, [payText(pay), t(pay.method), dateLabel(pay.paid_at), who, n].filter(Boolean).join(sep())),
         h('div', { class: 'row' },
           h('button', { type: 'button', class: 'link', onclick: () => receiptSheet(b, pay, p, rem) }, t('receipt')),
           canUndo ? h('button', { type: 'button', class: 'link bad', onclick: async () => {
@@ -1038,7 +1053,7 @@
     close = sheet(p ? p.title : t('bill'), h('div', { class: 'stack' },
       h('div', { class: 'summary' },
         h('small', { class: 'muted' }, monthLabel(b.month)), h('div', null, billDetail(b)),
-        h('div', { class: 'row between' }, h('span', null, t('total')), h('strong', null, ltr(money(b.amount)), ` · ${lbp(b.amount, rate)} ${t('lbpUnit')}`)),
+        h('div', { class: 'row between' }, h('span', null, t('total')), h('strong', null, ltr(money(b.amount)), `${sep()}${lbp(b.amount, rate)} ${t('lbpUnit')}`)),
         line(t('remaining'), money(rem), `amount ${rem > 0 ? 'bad' : 'ok'}`),
         old > 0 ? line(t('oldUnpaid'), money(old), 'amount bad') : null,
         old > 0 ? line(t('totalOwed'), money(old + rem), 'amount') : null),
@@ -1093,7 +1108,7 @@
       body.replaceChildren(
         h('small', { class: 'muted' }, t('sendProgress', { i: i + 1, n: queue.length })), bar,
         h('div', { class: 'summary' }, h('strong', null, p.title),
-          h('span', null, `${monthLabel(b.month)} · `, ltr(money(owed(b) + debtBefore(b.subscriber_id, b.month)))),
+          h('span', null, `${monthLabel(b.month)}${sep()}`, ltr(money(owed(b) + debtBefore(b.subscriber_id, b.month)))),
           h('span', { class: 'muted' }, ltr(p.info.phone))),
         h('button', { type: 'button', class: 'btn wa block', onclick: () => {
           openExternal(waLink(p.info.phone, billMessage(b, p)));
@@ -1129,8 +1144,7 @@
     const billed = bills.data.reduce((a, b) => a + Number(b.amount), 0);
     const paid = bills.data.reduce((a, b) => a + Number(b.paid_amount), 0);
     const unpaid = bills.data.filter((b) => Number(b.paid_amount) < Number(b.amount)).sort((a, b) => (b.amount - b.paid_amount) - (a.amount - a.paid_amount));
-    const bar = h('div', { class: 'bar' }, h('i'));
-    bar.firstChild.style.width = `${billed > 0 ? Math.round((paid / billed) * 100) : 0}%`;
+    const bar = meter(billed > 0 ? paid / billed : 0);
 
     const genBtn = h('button', { type: 'button', class: 'btn primary small', onclick: async (e) => {
       e.stopPropagation();
@@ -1142,7 +1156,7 @@
         const notes = [t('generated', { n: data.created + data.updated })];
         if (data.missing_reading) notes.push(t('missingReadings', { n: data.missing_reading }));
         if (data.invalid_reading) notes.push(t('invalidReadings', { n: data.invalid_reading }));
-        toast(notes.join(' · '), data.missing_reading || data.invalid_reading ? 'warn' : 'good');
+        toast(notes.join(sep()), data.missing_reading || data.invalid_reading ? 'warn' : 'good');
         viewHome();
       } catch (err) { fail(err); } finally { busy(genBtn, false); }
     } }, bills.data.length ? t('updateBills') : t('createBills'));
@@ -1166,18 +1180,18 @@
             bar,
             h('div', { class: 'row between' }, h('span', null, t('unpaidCount', { n: unpaid.length })), h('strong', { class: 'amount' }, money(billed - paid))),
             oldTotal > 0 ? h('button', { type: 'button', class: 'old-row', onclick: () => { state.billFilter = 'old'; go('bills'); } },
-              h('span', null, `${t('oldUnpaid')} · ${t('oldUnpaidSubs', { n: oldSubs })}`), h('strong', { class: 'amount' }, money(oldTotal))) : null),
+              h('span', null, `${t('oldUnpaid')}${sep()}${t('oldUnpaidSubs', { n: oldSubs })}`), h('strong', { class: 'amount' }, money(oldTotal))) : null),
           h('section', { class: 'card flush' },
             h('h3', { class: 'card-title' }, t('thisMonth')),
             step(1, !!tariff.data, t('stepPrice'), tariff.data ? t('priceSet', { kwh: ltr(money(tariff.data.kwh_price)), amp: ltr(money(tariff.data.flat_amp_price)) }) : t('priceNotSet'), null, () => tariffSheet(tariff.data, viewHome)),
-            step(2, metered.length > 0 && readCount === metered.length, t('stepReadings'), (metered.length ? t('readingsCount', { n: readCount, total: metered.length }) : t('noMeteredShort')) + (waiting ? ` · ${t('draftsWaiting', { n: waiting })}` : ''), null, () => go('readings')),
+            step(2, metered.length > 0 && readCount === metered.length, t('stepReadings'), (metered.length ? t('readingsCount', { n: readCount, total: metered.length }) : t('noMeteredShort')) + (waiting ? `${sep()}${t('draftsWaiting', { n: waiting })}` : ''), null, () => go('readings')),
             step(3, bills.data.length > 0, t('stepBills'), bills.data.length ? t('billsMade', { n: bills.data.length }) : t('billsNotMade'), genBtn))),
         h('div', { class: 'stack' },
           pending.length ? h('section', { class: 'card flush' },
             h('h3', { class: 'card-title' }, t('requests'), h('span', { class: 'badge' }, pending.length)),
             pending.map((p) => h('div', { class: 'item', role: 'button', tabindex: '0', onclick: () => requestSheet(p, viewHome) },
               avatar(p.info.name), h('div', { class: 'grow' }, h('strong', null, p.info.name || '—'),
-                h('small', { class: 'muted' }, [ltr(p.info.phone), p.info.building].filter(Boolean).join(' · '))),
+                h('small', { class: 'muted' }, [ltr(p.info.phone), p.info.building].filter(Boolean).join(sep()))),
               h('span', { class: 'pill partial' }, t('review'))))) : null,
           h('section', { class: 'card flush' },
             h('h3', { class: 'card-title' }, t('toCollect'), unpaid.length > 6 ? h('button', { type: 'button', class: 'link', onclick: () => go('bills') }, t('seeAll')) : null),
@@ -1198,7 +1212,7 @@
         const last = await sb.from('tariffs').select('*').eq('business_id', biz.id).lt('month', m).order('month', { ascending: false }).limit(1).maybeSingle();
         seed = last.data;
       }
-      const close = sheet(`${t('stepPrice')} · ${monthLabel(m)}`, h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
+      const close = sheet(`${t('stepPrice')}${sep()}${monthLabel(m)}`, h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
         e.preventDefault();
         const d = formData(e.target);
         const row = { kwh_price: num(d.kwh_price || 0), fixed_fee_per_amp: num(d.fixed_fee_per_amp || 0), flat_amp_price: num(d.flat_amp_price || 0) };
@@ -1275,7 +1289,7 @@
       } catch (err) { fail(err); } finally { busy(ok, false); }
     } },
       h('div', { class: 'summary' }, h('strong', null, p.info.name || '—'),
-        h('span', null, [ltr(p.info.phone), p.info.building, p.info.floor && `${t('floor')} ${p.info.floor}`].filter(Boolean).join(' · '))),
+        h('span', null, [ltr(p.info.phone), p.info.building, p.info.floor && `${t('floor')} ${p.info.floor}`].filter(Boolean).join(sep()))),
       subscriptionFields({ billing_type: 'metered', amps: 5, initial_reading: 0, label: '' }, {}),
       h('div', { class: 'grid2' }, no, ok)));
   }
@@ -1296,12 +1310,12 @@
       list.length ? h('div', { class: 'card flush grid-list' }, list.map((p) => h('div', { class: `item ${p.active ? '' : 'dim'}`, role: 'button', tabindex: '0', onclick: () => personSheet(p) },
         avatar(p.title),
         h('div', { class: 'grow' }, h('strong', null, p.title),
-          h('small', { class: 'muted' }, [p.label && p.info.name !== p.label ? p.info.name : null, p.info.building, ltr(p.info.phone)].filter(Boolean).join(' · '))),
+          h('small', { class: 'muted' }, [p.label && p.info.name !== p.label ? p.info.name : null, p.info.building, ltr(p.info.phone)].filter(Boolean).join(sep()))),
         h('div', { class: 'end-col' },
-          h('span', { class: 'pill' }, `${p.amps}A · ${typeLabel(p.billing_type)}`),
+          h('span', { class: 'row' }, h('small', { class: 'muted' }, typeLabel(p.billing_type)), h('span', { class: 'pill amps' }, `${p.amps}A`)),
           debtTotal(p.id) > 0
-            ? h('small', { class: 'bad' }, t('owes', { amt: ltr(money(debtTotal(p.id))) }))
-            : h('small', { class: p.status === 'active' ? 'ok' : 'muted' }, p.status === 'active' ? t('linked') : t('notLinked'))))))
+            ? h('span', { class: 'state bad' }, t('owes', { amt: ltr(money(debtTotal(p.id))) }))
+            : h('span', { class: `state ${p.status === 'active' ? 'ok' : ''}` }, p.status === 'active' ? t('linked') : t('notLinked'))))))
         : empty(people.length ? t('noResults') : t('noPeople'), h('button', { type: 'button', class: 'btn primary', onclick: () => personForm(null, again) }, icon('plus'), t('addSubscriber'))),
       h('button', { type: 'button', class: 'fab', onclick: () => personForm(null, again), 'aria-label': t('addSubscriber') }, icon('plus')));
   }
@@ -1321,8 +1335,8 @@
       h('div', { class: 'summary' },
         p.label ? line(t('theirName'), p.info.name || '—') : null,
         line(t('phone'), p.info.phone || '—', 'ltr'),
-        p.info.building ? line(t('building'), [p.info.building, p.info.floor].filter(Boolean).join(' · ')) : null,
-        line(t('subscription'), `${p.amps}A · ${typeLabel(p.billing_type)}`),
+        p.info.building ? line(t('building'), [p.info.building, p.info.floor].filter(Boolean).join(sep())) : null,
+        line(t('subscription'), `${p.amps}A${sep()}${typeLabel(p.billing_type)}`),
         line(t('appStatus'), p.status === 'active' ? t('linked') : t('notLinked'), p.status === 'active' ? 'ok' : ''),
         debtTotal(p.id) > 0 ? line(t('totalOwed'), money(debtTotal(p.id)), 'amount bad') : null),
       h('small', { class: 'muted' }, t('sendLinkHint')),
@@ -1479,7 +1493,7 @@
         else if (!prev.has(r.subscriber_id)) prev.set(r.subscriber_id, r.value);
       }
       rows = people.map((s) => ({
-        id: s.id, title: s.title, sub: [s.info.building, s.info.meter && `#${s.info.meter}`].filter(Boolean).join(' · '),
+        id: s.id, title: s.title, sub: [s.info.building, s.info.meter && `#${s.info.meter}`].filter(Boolean).join(sep()),
         prev: prev.has(s.id) ? Number(prev.get(s.id)) : Number(s.initial_reading),
         cur: cur.has(s.id) ? Number(cur.get(s.id).value) : null
       }));
@@ -1596,7 +1610,8 @@
       list.length ? h('div', { class: 'card flush' }, list.map((c) => h('div', { class: `item ${c.active ? '' : 'dim'}`, role: 'button', tabindex: '0', onclick: () => collectorSheet(c) },
         avatar(c.name),
         h('div', { class: 'grow' }, h('strong', null, c.name),
-          h('small', { class: 'muted' }, [ltr(c.phone), !c.active ? t('collectorOff') : c.devices > 0 ? t('linked') : t('notLinked')].filter(Boolean).join(' · '))),
+          c.phone ? h('small', { class: 'muted' }, ltr(c.phone)) : null,
+          h('span', { class: `state ${c.active && c.devices > 0 ? 'ok' : ''}` }, !c.active ? t('collectorOff') : c.devices > 0 ? t('linked') : t('notLinked'))),
         h('div', { class: 'end-col' }, h('strong', { class: 'amount' }, money(today(c.id))), h('small', { class: 'muted' }, t('tabToday'))))))
         : empty(t('noCollectors'), h('button', { type: 'button', class: 'btn primary', onclick: collectorForm }, icon('plus'), t('addCollector'))));
   }
@@ -1692,7 +1707,7 @@
       pays.length ? h('div', { class: 'card flush' }, pays.map((x) => h('div', { class: 'item static' },
         avatar(personName(x.bills && x.bills.subscriber_id)),
         h('div', { class: 'grow' }, h('strong', null, personName(x.bills && x.bills.subscriber_id)),
-          h('small', { class: 'muted' }, [x.bills ? monthLabel(x.bills.month) : '', t(x.method), new Date(x.paid_at).toLocaleTimeString(state.lang === 'ar' ? 'ar-LB' : 'en-GB', { hour: '2-digit', minute: '2-digit' })].filter(Boolean).join(' · '))),
+          h('small', { class: 'muted' }, [x.bills ? monthLabel(x.bills.month) : '', t(x.method), new Date(x.paid_at).toLocaleTimeString(state.lang === 'ar' ? 'ar-LB' : 'en-GB', { hour: '2-digit', minute: '2-digit' })].filter(Boolean).join(sep()))),
         h('div', { class: 'end-col' }, h('strong', { class: 'amount' }, payText(x)),
           h('button', { type: 'button', class: 'link bad', onclick: async () => {
             const { error } = await sb.from('payments').delete().eq('id', x.id);
@@ -1852,7 +1867,7 @@
             h('div', { class: 'hero-num' }, money(due)),
             h('div', { class: 'row between' },
               h('span', null, due > 0 ? `≈ ${lbp(due, biz.lbp_rate)} ${t('lbpUnit')}` : t('nothingDue')),
-              h('span', null, `${s.amps}A · ${typeLabel(s.billing_type)}`)),
+              h('span', null, `${s.amps}A${sep()}${typeLabel(s.billing_type)}`)),
             oldDue > 0 ? h('div', { class: 'old-row' }, h('span', null, t('includesOld', { amt: ltr(money(oldDue)) }))) : null,
             biz.phone ? h('a', { class: 'btn glass block', href: `tel:+${intlPhone(biz.phone)}` }, icon('phone'), t('callOwner')) : null),
           h('section', { class: 'card flush' },
@@ -1864,7 +1879,7 @@
                 b.billing_type === 'metered' ? h('small', null, t('readingLine', { prev: Number(b.prev_reading), curr: Number(b.curr_reading) })) : null,
                 h('small', null, billDetail(b)),
                 h('small', { class: 'muted' }, `≈ ${lbp(b.amount, biz.lbp_rate)} ${t('lbpUnit')}`),
-                (b.payments || []).map((p) => h('small', { class: 'ok' }, `✓ ${payText(p)} · ${t(p.method)} · ${dateLabel(p.paid_at)}`)))))
+                (b.payments || []).map((p) => h('small', { class: 'ok' }, `✓ ${payText(p)}${sep()}${t(p.method)}${sep()}${dateLabel(p.paid_at)}`)))))
               : h('p', { class: 'muted pad' }, t('noSubscriptionBills'))));
       }));
   }
@@ -1917,7 +1932,7 @@
           const cur = await sb.from('tariffs').select('*').eq('business_id', biz.id).eq('month', monthDate(state.month)).maybeSingle();
           tariffSheet(cur.data, () => {});
         }, 'tag'),
-        menuRow(t('business'), [biz.name, ltr(biz.phone)].filter(Boolean).join(' · '), bizSheet, 'bolt'),
+        menuRow(t('business'), [biz.name, ltr(biz.phone)].filter(Boolean).join(sep()), bizSheet, 'bolt'),
         state.subs.length ? menuRow(t('switchToSubscriber'), null, () => { state.mode = 'subscriber'; go('mybills'); }, 'home') : null));
     } else if (state.mode === 'collector') {
       parts.push(h('section', { class: 'card flush' },
@@ -1925,7 +1940,7 @@
         state.subs.length ? menuRow(t('switchToSubscriber'), null, () => { state.mode = 'subscriber'; go('mybills'); }, 'home') : null));
     } else {
       parts.push(h('section', { class: 'card flush' },
-        state.subs.filter((s) => s.status === 'active').map((s) => menuRow(t('myDetails'), [s.info.name, ltr(s.info.phone), s.business.name].filter(Boolean).join(' · '), () => myInfoSheet(s), 'people')),
+        state.subs.filter((s) => s.status === 'active').map((s) => menuRow(t('myDetails'), [s.info.name, ltr(s.info.phone), s.business.name].filter(Boolean).join(sep()), () => myInfoSheet(s), 'people')),
         menuRow(t('addGenerator'), t('addGeneratorShort'), viewEnterCode, 'plus'),
         state.ownBusiness ? menuRow(t('switchToOwner'), null, () => { state.mode = 'owner'; go('home'); }, 'bolt') : null,
         state.roles.length ? menuRow(t('switchToCollector'), null, () => { state.mode = 'collector'; go('collect'); }, 'check') : null));
