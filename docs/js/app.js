@@ -232,8 +232,43 @@
           h('button', { class: 'icon-btn', type: 'button', onclick: close, 'aria-label': t('close') }, '✕')),
         body));
     document.body.append(wrap);
+    swipeToClose(wrap.firstChild, close);
     requestAnimationFrame(() => wrap.classList.add('open'));
     return close;
+  }
+
+  function swipeToClose(el, close) {
+    let y0 = null; let t0 = 0; let dy = 0; let dragging = false; let fromHead = false;
+    const reset = () => { y0 = null; dragging = false; dy = 0; };
+    el.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1 || window.innerWidth >= 900) return;
+      y0 = e.touches[0].clientY; t0 = Date.now(); dy = 0; dragging = false;
+      fromHead = !!e.target.closest('.grab, .sheet-head');
+    }, { passive: true });
+    el.addEventListener('touchmove', (e) => {
+      if (y0 === null) return;
+      const d = e.touches[0].clientY - y0;
+      if (!dragging) {
+        if (d > 6 && (el.scrollTop <= 0 || fromHead)) {
+          dragging = true;
+          el.style.transition = 'none';
+          if (document.activeElement && el.contains(document.activeElement)) document.activeElement.blur();
+        } else if (Math.abs(d) > 6) { y0 = null; return; } else return;
+      }
+      dy = Math.max(0, d);
+      el.style.transform = `translateY(${dy}px)`;
+      if (e.cancelable) e.preventDefault();
+    }, { passive: false });
+    const end = () => {
+      if (!dragging) { reset(); return; }
+      const fast = dy / Math.max(1, Date.now() - t0) > 0.5;
+      el.style.transition = '';
+      el.style.transform = '';
+      if (dy > 110 || (fast && dy > 40)) close();
+      reset();
+    };
+    el.addEventListener('touchend', end);
+    el.addEventListener('touchcancel', end);
   }
 
   function closeSheets() {

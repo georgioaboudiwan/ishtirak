@@ -1,4 +1,4 @@
-const CACHE = 'ishtirak-v7';
+const CACHE = 'ishtirak-v8';
 const SHELL = ['./', 'index.html', 'css/app.css', 'js/config.js', 'js/i18n.js', 'js/vault.js', 'js/app.js', 'vendor/supabase.js', 'manifest.webmanifest', 'icons/icon-192.png', 'fonts/plex-latin-400.woff2', 'fonts/plex-latin-500.woff2', 'fonts/plex-latin-700.woff2', 'fonts/plex-arabic-400.woff2', 'fonts/plex-arabic-500.woff2', 'fonts/plex-arabic-700.woff2'];
 
 self.addEventListener('install', (e) => {
