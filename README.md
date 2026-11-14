@@ -50,7 +50,7 @@ After any change in `docs/`, `npm run sync` copies it into both apps. Links sent
 ```
 python3 scripts/release.py 1.6.0
 ```
-Sets the version in the web app, the offline cache (so phones pick up the update), Android and iPhone. Release notes live in `releases/`.
+Sets the version in the web app, the offline cache (so phones pick up the update), Android and iPhone. Release notes live in `releases/` and are emailed to the owner by the `release-mail` Edge Function (Gmail SMTP; needs the `GMAIL_APP_PASSWORD` function secret and the `mail_user` Vault secret, called with the `push_drain` secret in the `x-drain` header).
 
 ## How billing works
 
