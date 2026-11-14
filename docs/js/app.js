@@ -130,6 +130,7 @@
   function render(...nodes) {
     const list = nodes.flat(3).filter((n) => n !== null && n !== undefined && n !== false);
     const fabs = list.filter((n) => n instanceof Element && n.classList.contains('fab'));
+    document.body.classList.remove('boot');
     $app.replaceChildren(h('div', { class: 'view' }, list.filter((n) => !fabs.includes(n))));
     $fab.replaceChildren(...fabs);
     $app.scrollTop = 0;
@@ -2649,6 +2650,27 @@
       document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
     }).catch(() => {});
   }
+
+  // iPhone Home Screen apps can start with a viewport shorter than the screen, which lifts
+  // bottom-anchored bars. Anchor them to the real screen height instead.
+  function fixViewport() {
+    const root = document.documentElement;
+    if (isNative || !isIOS() || !standalone()) return;
+    const probe = h('div', { class: 'safe-probe' });
+    document.body.append(probe);
+    const safeTop = parseFloat(getComputedStyle(probe).paddingTop) || 0;
+    probe.remove();
+    if (safeTop < 20) return;
+    const portrait = matchMedia('(orientation: portrait)').matches;
+    const hgt = portrait ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
+    if (!hgt || hgt < innerHeight) { root.classList.remove('ios-app'); return; }
+    root.style.setProperty('--app-h', `${hgt}px`);
+    root.classList.add('ios-app');
+  }
+  fixViewport();
+  window.addEventListener('orientationchange', () => setTimeout(fixViewport, 300));
+  window.addEventListener('resize', fixViewport);
+  setTimeout(() => document.body.classList.remove('boot'), 10000);
 
   applyLang();
 })();
