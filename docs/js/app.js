@@ -132,6 +132,7 @@
     const fabs = list.filter((n) => n instanceof Element && n.classList.contains('fab'));
     $app.replaceChildren(h('div', { class: 'view' }, list.filter((n) => !fabs.includes(n))));
     $fab.replaceChildren(...fabs);
+    $app.scrollTop = 0;
     window.scrollTo(0, 0);
   }
 
