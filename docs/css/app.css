@@ -514,3 +514,4 @@ html.big #dock .tab span { font-size: 13px; }
 .log-pre { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--sunk); font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; direction: ltr; text-align: left; max-height: 280px; overflow: auto; }
 .log-line { display: block; }
 .log-line .pill { display: inline-block; margin-inline-end: 6px; vertical-align: middle; }
+.view.still { animation: none; }

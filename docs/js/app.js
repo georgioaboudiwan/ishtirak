@@ -6,7 +6,7 @@
   const isNative = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
   const plugins = (window.Capacitor && window.Capacitor.Plugins) || {};
   let dataVer = 0;
-  const READ_RPC = /\/rpc\/(my_subscriptions|my_collector_roles|collector_subscribers|join_preview|am_i_admin|log_event)$/;
+  const READ_RPC = /\/rpc\/(my_subscriptions|my_collector_roles|collector_subscribers|join_preview|am_i_admin|log_event|owner_home|app_context)$/;
   const trackedFetch = (input, init) => {
     const method = ((init && init.method) || (input && input.method) || 'GET').toUpperCase();
     const url = String(typeof input === 'string' ? input : input.url).split('?')[0];
@@ -132,12 +132,14 @@
   function render(...nodes) {
     const list = nodes.flat(3).filter((n) => n !== null && n !== undefined && n !== false);
     const fabs = list.filter((n) => n instanceof Element && n.classList.contains('fab'));
+    const same = $app.dataset.route === (state.route || '') && !!$app.querySelector('.view:not(.loading)');
+    const keep = $app.scrollTop;
     document.body.classList.remove('boot');
-    $app.replaceChildren(h('div', { class: 'view' }, list.filter((n) => !fabs.includes(n))));
+    const loading = list.some((n) => n instanceof Element && n.classList.contains('skeleton'));
+    $app.replaceChildren(h('div', { class: `view${same ? ' still' : ''}${loading ? ' loading' : ''}` }, list.filter((n) => !fabs.includes(n))));
     $fab.replaceChildren(...fabs);
     $app.dataset.route = state.route || '';
-    $app.scrollTop = 0;
-    window.scrollTo(0, 0);
+    if (same) $app.scrollTop = keep; else { $app.scrollTop = 0; window.scrollTo(0, 0); }
   }
 
   function meter(pct) {
@@ -515,15 +517,12 @@
     let biz; let subs; let roles;
     try {
       if (!navigator.onLine) throw new Error('Failed to fetch');
-      let admin;
-      [biz, subs, roles, admin] = await Promise.all([
-        state.user.is_anonymous ? Promise.resolve({ data: null }) : sb.from('businesses').select('*').eq('owner_id', uid).maybeSingle(),
-        sb.rpc('my_subscriptions'),
-        sb.rpc('my_collector_roles'),
-        state.user.is_anonymous ? Promise.resolve({ data: false }) : sb.rpc('am_i_admin')
-      ]);
-      state.isAdmin = !admin.error && admin.data === true;
-      for (const r of [biz, subs, roles]) if (r.error) throw r.error;
+      const ctx = await sb.rpc('app_context');
+      if (ctx.error) throw ctx.error;
+      biz = { data: ctx.data.business || null };
+      subs = { data: ctx.data.subscriptions || [] };
+      roles = { data: ctx.data.roles || [] };
+      state.isAdmin = ctx.data.admin === true;
       if (biz.data) store.set(`ctx:${uid}`, JSON.stringify(biz.data));
     } catch (e) {
       const cached = isNetErr(e) ? store.get(`ctx:${uid}`) : null;
@@ -987,7 +986,10 @@
       ? await sb.rpc('collector_subscribers', { p_business: state.business.id })
       : await sb.from('subscribers').select('*').eq('business_id', state.business.id).order('created_at');
     if (res.error) throw res.error;
-    const data = res.data || [];
+    return decryptPeople(res.data || []);
+  }
+
+  async function decryptPeople(data) {
     await Promise.all(data.map(async (p) => {
       if (p.status === 'pending') {
         const o = await V.open(state.priv, p.jk);
@@ -1031,12 +1033,16 @@
   async function fetchCollectors() {
     const { data, error } = await sb.from('collectors').select('*').eq('business_id', state.business.id).order('created_at');
     if (error) throw error;
-    for (const c of data) {
-      const info = (await V.dec(state.bk, c.name_enc)) || {};
-      c.name = info.name || '—';
-      c.phone = info.phone || '';
-      c.ck = ((await V.dec(state.bk, c.wck)) || {}).k;
-    }
+    return decryptCollectors(data);
+  }
+
+  async function decryptCollectors(data) {
+    await Promise.all(data.map(async (c) => {
+      const [info, wck] = await Promise.all([V.dec(state.bk, c.name_enc), V.dec(state.bk, c.wck)]);
+      c.name = (info || {}).name || '—';
+      c.phone = (info || {}).phone || '';
+      c.ck = (wck || {}).k;
+    }));
     return data;
   }
 
@@ -1257,31 +1263,36 @@
 
   function homeKeys(biz, m) { return [`people:owner:${biz.id}`, `home:${m}:${biz.id}`, `open:${biz.id}`, `collectors:${biz.id}`]; }
 
+  const homeRaw = {};
   function homeData(biz, m, ttl) {
     return cached(`home:${m}:${biz.id}`, async () => {
-      const [tariff, readings, bills, pc, rc] = await Promise.all([
-        sb.from('tariffs').select('*').eq('business_id', biz.id).eq('month', m).maybeSingle(),
-        sb.from('readings').select('subscriber_id, subscribers!inner(business_id)').eq('month', m).eq('subscribers.business_id', biz.id),
-        sb.from('bills').select(`*, payments(${PAY})`).eq('business_id', biz.id).eq('month', m),
-        sb.from('payment_claims').select(`*, bills(*, payments(${PAY}))`).eq('business_id', biz.id).eq('status', 'pending').order('created_at'),
-        sb.from('reading_claims').select('*').eq('business_id', biz.id).eq('status', 'pending').order('created_at')
-      ]);
-      for (const r of [tariff, readings, bills, pc, rc]) if (r.error) throw r.error;
-      return { tariff: tariff.data, readings: readings.data, bills: bills.data, payClaims: pc.data, readClaims: rc.data };
+      const { data, error } = await sb.rpc('owner_home', { p_business: biz.id, p_month: m });
+      if (error) throw error;
+      homeRaw[`${biz.id}:${m}`] = JSON.stringify(data);
+      const [people, collectors] = await Promise.all([decryptPeople(data.people || []), decryptCollectors(data.collectors || [])]);
+      people.sort((a, b) => a.title.localeCompare(b.title));
+      const at = Date.now();
+      seed(`people:owner:${biz.id}`, people, at);
+      seed(`open:${biz.id}`, data.open || [], at);
+      seed(`collectors:${biz.id}`, collectors, at);
+      return { tariff: data.tariff, readings: data.readings || [], bills: data.bills || [], payClaims: data.pay_claims || [], readClaims: data.read_claims || [] };
     }, ttl || 120000);
   }
 
   async function fetchHome(biz, m) {
     await syncDrafts();
-    const [people, hd] = await Promise.all([loadPeople(), homeData(biz, m), loadOpenBills(), loadCollectors()]);
+    const hd = await homeData(biz, m);
+    const [people] = await Promise.all([loadPeople(), loadOpenBills(), loadCollectors()]);
     homeFresh[`${biz.id}:${m}`] = Date.now();
     saveSnapshot(biz, m);
     return [people, hd];
   }
 
   async function refreshHome(biz, m) {
+    const before = homeRaw[`${biz.id}:${m}`];
     for (const k of [...memo.keys()]) if (k.endsWith(`:${biz.id}`)) memo.delete(k);
     try { await fetchHome(biz, m); } catch (e) { if (!isNetErr(e)) logError(e, 'refreshHome'); return; }
+    if (before && before === homeRaw[`${biz.id}:${m}`]) return;
     const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
     if (state.route === 'home' && state.business && state.business.id === biz.id && monthDate(state.month) === m && !document.querySelector('.sheet-wrap') && !typing) viewHome(true).catch(fail);
   }
@@ -1318,7 +1329,8 @@
       state.sent = sentMap();
       if (Date.now() - (homeFresh[`${biz.id}:${m}`] || 0) > 8000) { homeFresh[`${biz.id}:${m}`] = Date.now(); setTimeout(() => refreshHome(biz, m), 0); }
     } else if (fresh === true) {
-      [people, hd] = await Promise.all([loadPeople(), homeData(biz, m), loadOpenBills(), loadCollectors()]);
+      hd = await homeData(biz, m);
+      [people] = await Promise.all([loadPeople(), loadOpenBills(), loadCollectors()]);
     } else {
       [people, hd] = await fetchHome(biz, m);
     }
@@ -1891,7 +1903,8 @@
     const q = (query || '').toLowerCase();
     const biz = state.business;
     const m = monthDate(state.month);
-    const [, hd] = await Promise.all([loadPeople(), homeData(biz, m, 20000), loadOpenBills(), loadCollectors()]);
+    const hd = await homeData(biz, m, 20000);
+    await Promise.all([loadPeople(), loadOpenBills(), loadCollectors()]);
     const data = hd.bills;
     const oldBills = state.openBills.filter((b) => b.month < m);
     const again = () => viewBills(status, query).catch(fail);
@@ -3556,9 +3569,14 @@
 
   async function boot(force) {
     if (holdBoot && !force) return;
+    if (!state.user && !state.mode) {
+      const early = storedUser();
+      if (early) { state.user = early; await fastStart(); }
+    }
     const { data } = await sb.auth.getSession();
     state.user = data.session ? data.session.user : null;
     if (!state.user && !navigator.onLine) state.user = storedUser();
+    if (!state.user && state.mode) Object.assign(state, { mode: null, business: null, ownBusiness: null, bk: null, priv: null });
     if (state.user) await fastStart();
     try {
       if (!state.user && (state.invite || state.join || state.cinvite)) await ensureSession();
