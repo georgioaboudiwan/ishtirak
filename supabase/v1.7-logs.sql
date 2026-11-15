@@ -13,6 +13,8 @@ grant execute on function private.is_admin() to authenticated;
 create or replace function public.am_i_admin() returns boolean language sql stable security definer set search_path = '' as $$
   select private.is_admin();
 $$;
+revoke all on function public.am_i_admin() from public, anon;
+grant execute on function public.am_i_admin() to authenticated;
 
 create table public.app_logs (
   id bigint generated always as identity primary key,
