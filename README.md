@@ -83,6 +83,16 @@ Sets the version in the web app, the offline cache (so phones pick up the update
 - Meter photos: tap the camera next to a reading to attach a photo. The owner sees it on the bill and the subscriber sees it in their bill details.
 - Notifications on the phone: bill ready, payment received, notices (cuts, maintenance) and join requests.
 - Payment reminders: subscribers who still owe get a notification after a set number of days (More > Payment reminders, default 7, off is allowed), repeated at the same interval until they pay.
+- Door to door: unpaid subscribers sorted by building and floor, with one-tap Paid, Part (oldest months first) and Not home (moved to the end of the round). Owners and collectors.
+- Meter rounds: readings grouped by building with a done count, Enter jumps to the next meter, and readings lower than last month or far above the usual use are flagged before saving.
+- Official price: the Ministry of Energy price per kWh (LBP) and the area (below/above 700 m) are kept with each month's prices; the app warns when your kWh price is above it at your dollar rate. `official_prices` can hold the published prices so they prefill.
+- Late payers: everyone 2 months or more behind, with WhatsApp and notification warnings, cut / reconnect, and a reconnection fee added to the latest bill.
+- Costs and profit: diesel (with liters), oil, repairs, salaries; monthly profit, diesel price per liter, break-even and 20% profit price per kWh.
+- Whish / OMT: subscribers tell the owner they paid (amount and an encrypted transfer reference); the owner confirms with one tap and the payment is recorded.
+- Subscribers can send their own meter reading with a photo; the owner approves it from Home.
+- Subscriber usage chart for the last 12 months and an estimate of the next bill.
+- Next step card on Home, Undo after recording or removing a payment, search and filters for bills and subscribers, PDF receipts, large text and Arabic-Indic digits.
+- Problem reports and app logs: errors are logged automatically (no names, phone numbers or link keys), anyone can send a problem report from More, and the admin sees everything under More > App logs. Reports are emailed to the admin at once; new errors are emailed once an hour.
 - Import from Excel: add many subscribers from an .xlsx or .csv file (English or Arabic column names), with a preview, skipped-row reasons, duplicate phone check, and a WhatsApp queue to send everyone their link.
 
 ## Notifications
@@ -96,7 +106,7 @@ Sets the version in the web app, the offline cache (so phones pick up the update
 
 ## Database
 
-`supabase/schema.sql` holds the full database setup (tables, functions, triggers, row level security, grants) up to v1.5, and `supabase/v1.6.sql` adds notifications, reminders and meter photos (its header lists the Vault secrets and the Edge Function to deploy). Apply both to an empty Supabase project to rebuild the backend, then turn on anonymous sign-ins and set the Site URL and redirect URLs.
+`supabase/schema.sql` holds the full database setup (tables, functions, triggers, row level security, grants) up to v1.5, `supabase/v1.6.sql` adds notifications, reminders and meter photos (its header lists the Vault secrets and the Edge Function to deploy), `supabase/v1.7.sql` adds official prices, cut list and fees, costs and payment/reading claims, and `supabase/v1.7-logs.sql` adds app logs and admin emails (add the admin to `app_admins`). Apply both to an empty Supabase project to rebuild the backend, then turn on anonymous sign-ins and set the Site URL and redirect URLs.
 
 ## Security
 

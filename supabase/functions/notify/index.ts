@@ -1,5 +1,3 @@
-// Sends queued notifications (bill ready, payment received, notices, join requests, reminders).
-// Called every minute by pg_cron (private.kick_push) with the x-drain secret.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 import webpush from 'npm:web-push@3.6.7';
 
@@ -14,13 +12,23 @@ const T = {
     bill: (p: any) => `Your ${month(p.month, 'en')} bill is ready: ${usd(p.amount)}`,
     paid: (p: any) => `Payment received: ${usd(p.amount)}. Thank you!` + (Number(p.left) > 0 ? ` Still owed for ${month(p.month, 'en')}: ${usd(p.left)}` : ''),
     remind: (p: any) => `Reminder: you still owe ${usd(p.amount)}` + (Number(p.bills) > 1 ? ` (${p.bills} bills)` : '') + '. Open your link to see the details.',
-    join: () => 'New join request. Open the app to accept it.'
+    join: () => 'New join request. Open the app to accept it.',
+    claim: (p: any) => `A subscriber says they paid ${usd(p.amount)} by ${p.method === 'omt' ? 'OMT' : p.method === 'whish' ? 'Whish' : 'transfer'}. Open the app to confirm it.`,
+    reading: () => 'A subscriber sent their meter reading. Open the app to approve it.',
+    late: (p: any) => `You owe ${usd(p.amount)}` + (Number(p.months) > 1 ? ` for ${p.months} months` : '') + '. Please pay soon to avoid a cut.',
+    cut: () => 'Your subscription is cut for unpaid bills. Pay to get reconnected.',
+    back: () => 'Your subscription is reconnected. Thank you!'
   },
   ar: {
     bill: (p: any) => `فاتورة ${month(p.month, 'ar')} جاهزة: ${usd(p.amount)}`,
     paid: (p: any) => `تم استلام دفعة ${usd(p.amount)}. شكراً!` + (Number(p.left) > 0 ? ` المتبقي عن ${month(p.month, 'ar')}: ${usd(p.left)}` : ''),
     remind: (p: any) => `تذكير: عليك ${usd(p.amount)}` + (Number(p.bills) > 1 ? ` (${p.bills} فواتير)` : '') + '. افتح رابطك لرؤية التفاصيل.',
-    join: () => 'طلب انضمام جديد. افتح التطبيق لقبوله.'
+    join: () => 'طلب انضمام جديد. افتح التطبيق لقبوله.',
+    claim: (p: any) => `مشترك بيقول إنو دفع ${usd(p.amount)} عبر ${p.method === 'omt' ? 'OMT' : p.method === 'whish' ? 'Whish' : 'تحويل'}. افتح التطبيق لتأكّد.`,
+    reading: () => 'مشترك بعت قراءة العداد. افتح التطبيق لتوافق عليها.',
+    late: (p: any) => `عليك ${usd(p.amount)}` + (Number(p.months) > 1 ? ` عن ${p.months} أشهر` : '') + '. الرجاء الدفع بأقرب وقت لتجنّب القطع.',
+    cut: () => 'انقطع اشتراكك بسبب فواتير غير مدفوعة. ادفع لترجع الكهرباء.',
+    back: () => 'رجع اشتراكك. شكراً!'
   }
 };
 
@@ -42,7 +50,6 @@ function message(r: Row) {
   return { title: title.slice(0, 120), body: body.slice(0, 300), tag: `${p.t}-${p.month || ''}`, url: './' };
 }
 
-// Firebase Cloud Messaging (native apps). Used only once an FCM service account is stored in the vault.
 let fcmToken: { token: string; exp: number } | null = null;
 async function fcmAccess(sa: any) {
   if (fcmToken && fcmToken.exp > Date.now() + 60000) return fcmToken.token;

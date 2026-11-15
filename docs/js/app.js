@@ -6,7 +6,7 @@
   const isNative = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
   const plugins = (window.Capacitor && window.Capacitor.Plugins) || {};
   let dataVer = 0;
-  const READ_RPC = /\/rpc\/(my_subscriptions|my_collector_roles|collector_subscribers|join_preview)$/;
+  const READ_RPC = /\/rpc\/(my_subscriptions|my_collector_roles|collector_subscribers|join_preview|am_i_admin|log_event)$/;
   const trackedFetch = (input, init) => {
     const method = ((init && init.method) || (input && input.method) || 'GET').toUpperCase();
     const url = String(typeof input === 'string' ? input : input.url).split('?')[0];
@@ -108,7 +108,9 @@
     lock: 'M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3',
     globe: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18',
     plus: 'M12 5v14M5 12h14',
-    camera: 'M4 8h3l2-3h6l2 3h3v11H4zM12 17a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z'
+    camera: 'M4 8h3l2-3h6l2 3h3v11H4zM12 17a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z',
+    text: 'M4 7V5h11v2M9.5 5v14M7 19h5M14 12v-1.5h7V12M17.5 10.5V19M16 19h3',
+    hash: 'M5 9h14M5 15h14M10 4 8 20M16 4l-2 16'
   };
 
   function icon(name, cls) {
@@ -146,12 +148,12 @@
   }
 
   let toastTimer;
-  function toast(msg, kind) {
-    $toast.textContent = msg;
+  function toast(msg, kind, action) {
+    $toast.replaceChildren(...[h('span', null, msg), action ? h('button', { type: 'button', class: 'toast-act', onclick: () => { $toast.hidden = true; action.fn(); } }, action.label) : null].filter(Boolean));
     $toast.className = `toast ${kind || ''}`;
     $toast.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { $toast.hidden = true; }, 3800);
+    toastTimer = setTimeout(() => { $toast.hidden = true; }, action ? 6500 : 3800);
     if (kind === 'good' && navigator.vibrate) navigator.vibrate(12);
   }
 
@@ -172,9 +174,9 @@
     return t('error');
   }
 
-  function fail(e) { console.error(e); toast(errMsg(e), 'bad'); }
+  function fail(e) { console.error(e); const m = errMsg(e); if (m === t('error')) logError(e, 'fail'); toast(m, 'bad'); }
 
-  function money(n) { return `$${Number(n || 0).toFixed(2)}`; }
+  function money(n) { const v = Number(n || 0); return `${v < -0.004 ? '-' : ''}$${Math.abs(v).toFixed(2)}`; }
   function lbp(n, rate) { return Math.round(Number(n || 0) * Number(rate || 0)).toLocaleString('en-US'); }
   function monthDate(m) { return `${m}-01`; }
   function monthLabel(d) {
@@ -350,6 +352,7 @@
     $langs.forEach((b) => { b.textContent = state.lang === 'ar' ? 'English' : 'عربي'; });
     document.querySelectorAll('.brand-name').forEach((b) => { b.textContent = t('app'); });
     document.title = t('app');
+    applyDisplayPrefs();
   }
 
   function switchLang() {
@@ -364,7 +367,7 @@
   const ownerTabs = [['home', 'tabHome', 'home'], ['people', 'tabPeople', 'people'], ['bills', 'tabBills', 'bills'], ['more', 'tabMore', 'more']];
   const subTabs = [['mybills', 'tabBills', 'bills'], ['subnotices', 'tabNotices', 'bell'], ['more', 'tabMore', 'more']];
   const collectorTabs = [['collect', 'tabCollect', 'bills'], ['today', 'tabToday', 'check'], ['more', 'tabMore', 'more']];
-  const parents = { readings: 'home', notices: 'more', invite: 'more', collectors: 'more', reports: 'more' };
+  const parents = { readings: 'home', notices: 'more', invite: 'more', collectors: 'more', reports: 'more', round: 'bills', late: 'home', costs: 'more', logs: 'more' };
   const PAY = 'id, bill_id, amount, method, note, paid_at, collector_id, lbp_amount, lbp_rate';
 
   const $lens = h('span', { class: 'lens', 'aria-hidden': 'true' });
@@ -375,7 +378,7 @@
     document.body.classList.toggle('has-nav', !!list);
     navList = list || [];
     if (!list) { $dock.replaceChildren(); $side.replaceChildren(); return; }
-    const active = parents[state.route] || state.route;
+    const active = (state.mode === 'collector' && state.route === 'round' ? 'collect' : parents[state.route]) || state.route;
     const make = () => list.map(([r, k, ic]) => h('button', {
       type: 'button', class: active === r ? 'tab on' : 'tab', onclick: () => go(r), 'aria-current': active === r ? 'page' : null
     }, icon(ic), h('span', null, t(k))));
@@ -431,7 +434,7 @@
     if (!d.moved) return;
     dragEnd = Date.now();
     const target = navList[dragIndex(d)];
-    if (e.type === 'pointerup' && target && target[0] !== (parents[state.route] || state.route)) {
+    if (e.type === 'pointerup' && target && target[0] !== ((state.mode === 'collector' && state.route === 'round' ? 'collect' : parents[state.route]) || state.route)) {
       if (navigator.vibrate) navigator.vibrate(8);
       go(target[0]);
     } else drawNav();
@@ -466,10 +469,10 @@
       applyMode();
       if (state.mode === 'owner' && !state.bk) { drawNav(false); if (!(await ensureKeys())) return; }
       const views = state.mode === 'owner'
-        ? { home: viewHome, people: viewPeople, bills: viewBills, more: viewMore, readings: viewReadings, notices: viewNotices, invite: viewInviteAll, collectors: viewCollectors, reports: viewReports }
+        ? { home: viewHome, people: viewPeople, bills: viewBills, more: viewMore, readings: viewReadings, notices: viewNotices, invite: viewInviteAll, collectors: viewCollectors, reports: viewReports, round: viewRound, late: viewLate, costs: viewCosts, logs: viewLogs }
         : state.mode === 'collector'
-          ? { collect: viewCollect, today: viewToday, more: viewMore }
-          : { mybills: viewMyBills, subnotices: viewSubNotices, more: viewMore };
+          ? { collect: viewCollect, today: viewToday, more: viewMore, round: viewRound, logs: viewLogs }
+          : { mybills: viewMyBills, subnotices: viewSubNotices, more: viewMore, logs: viewLogs };
       if (!views[state.route]) state.route = defaultRoute();
       drawNav();
       if (!navigator.onLine && state.route !== 'readings') return viewOffline();
@@ -494,11 +497,14 @@
     let biz; let subs; let roles;
     try {
       if (!navigator.onLine) throw new Error('Failed to fetch');
-      [biz, subs, roles] = await Promise.all([
+      let admin;
+      [biz, subs, roles, admin] = await Promise.all([
         state.user.is_anonymous ? Promise.resolve({ data: null }) : sb.from('businesses').select('*').eq('owner_id', uid).maybeSingle(),
         sb.rpc('my_subscriptions'),
-        sb.rpc('my_collector_roles')
+        sb.rpc('my_collector_roles'),
+        state.user.is_anonymous ? Promise.resolve({ data: false }) : sb.rpc('am_i_admin')
       ]);
+      state.isAdmin = !admin.error && admin.data === true;
       for (const r of [biz, subs, roles]) if (r.error) throw r.error;
       if (biz.data) store.set(`ctx:${uid}`, JSON.stringify(biz.data));
     } catch (e) {
@@ -1083,7 +1089,7 @@
     const quick = rem > 0 ? h('button', { type: 'button', class: 'btn paid-btn', onclick: async (e) => {
       e.stopPropagation();
       busy(quick, true);
-      try { await payBill(b, rem, 'cash'); toast(t('markedPaid', { name }), 'good'); after(); }
+      try { const pay = await payBill(b, rem, 'cash'); paymentToast(t('markedPaid', { name }), [pay], after); after(); }
       catch (err) { fail(err); busy(quick, false); }
     } }, icon('check'), t('markPaid')) : h('span', { class: 'pill paid' }, t('paid'));
     return h('div', { class: 'item', role: 'button', tabindex: '0', onclick: () => billSheet(b, after).catch(fail) },
@@ -1124,11 +1130,7 @@
         h('span', null, [payText(pay), t(pay.method), dateLabel(pay.paid_at), who, n].filter(Boolean).join(sep())),
         h('div', { class: 'row' },
           h('button', { type: 'button', class: 'link', onclick: () => receiptSheet(b, pay, p, rem) }, t('receipt')),
-          canUndo ? h('button', { type: 'button', class: 'link bad', onclick: async () => {
-            const { error } = await sb.from('payments').delete().eq('id', pay.id);
-            if (error) return fail(error);
-            close(); after();
-          } }, t('undo')) : null)));
+          canUndo ? h('button', { type: 'button', class: 'link bad', onclick: () => { close(); removePayment(pay, after); } }, t('undo')) : null)));
     }
     const form = rem > 0 ? h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
       e.preventDefault();
@@ -1148,7 +1150,7 @@
       busy(save, true);
       try {
         const pay = await payBill(b, a, d.method || 'cash', clean(note.value, 120), l);
-        close(); toast(t('paymentSaved'), 'good'); after();
+        close(); paymentToast(t('paymentSaved'), [pay], after); after();
         receiptSheet(b, pay, p, rem - a);
       } catch (err) { fail(err); } finally { busy(save, false); }
     } },
@@ -1197,8 +1199,8 @@
         lines.map(([k, v]) => h('div', { class: 'row between' }, h('span', { class: 'muted' }, k), h('strong', null, v)))),
       h('div', { class: 'actions three' },
         p && p.info.phone ? h('button', { type: 'button', class: 'act wa', onclick: () => openExternal(waLink(p.info.phone, text)) }, icon('chat'), h('span', null, 'WhatsApp')) : null,
-        h('button', { type: 'button', class: 'act', onclick: () => shareText(text) }, icon('send'), h('span', null, t('share'))),
-        isNative ? null : h('button', { type: 'button', class: 'act', onclick: () => window.print() }, icon('bills'), h('span', null, t('print'))))));
+        h('button', { type: 'button', class: 'act', onclick: (e) => { const btn = e.currentTarget; busy(btn, true); receiptPdf(biz.name, title, lines, receiptNo(pay)).catch(fail).finally(() => busy(btn, false)); } }, icon('bills'), h('span', null, 'PDF')),
+        h('button', { type: 'button', class: 'act', onclick: () => shareText(text) }, icon('send'), h('span', null, t('share'))))));
   }
 
   function sendQueue(bills) {
@@ -1246,6 +1248,7 @@
       loadOpenBills(),
       loadCollectors()
     ]);
+    await loadClaims();
     const oldBills = state.openBills.filter((b) => b.month < m).sort((a, b) => owed(b) - owed(a));
     const oldTotal = oldBills.reduce((a, b) => a + owed(b), 0);
     const oldSubs = new Set(oldBills.map((b) => b.subscriber_id)).size;
@@ -1260,6 +1263,15 @@
     const paid = bills.data.reduce((a, b) => a + Number(b.paid_amount), 0);
     const unpaid = bills.data.filter((b) => Number(b.paid_amount) < Number(b.amount)).sort((a, b) => (b.amount - b.paid_amount) - (a.amount - a.paid_amount));
     const bar = meter(billed > 0 ? paid / billed : 0);
+    const late = lateRows();
+    const missingPeople = metered.filter((p) => !readIds.has(p.id));
+    const bldCount = {};
+    for (const p of missingPeople) { const k = p.info.building || ''; bldCount[k] = (bldCount[k] || 0) + 1; }
+    const missingBuilding = Object.keys(bldCount).sort((a, b) => bldCount[b] - bldCount[a])[0] || '';
+    const unsent = unpaid.filter((b) => !state.sent[b.id] && people.some((p) => p.id === b.subscriber_id && p.info.phone));
+    const rate = Number(biz.lbp_rate);
+    const official = tariff.data && tariff.data.official_kwh_lbp ? Number(tariff.data.official_kwh_lbp) : 0;
+    const aboveOfficial = official > 0 && rate > 0 && Number(tariff.data.kwh_price) * rate > official * 1.005;
 
     const genBtn = h('button', { type: 'button', class: 'btn primary small', onclick: async (e) => {
       e.stopPropagation();
@@ -1289,6 +1301,12 @@
         h('button', { type: 'button', class: 'btn ghost block', onclick: importSheet }, t('importTitle')),
         h('button', { type: 'button', class: 'btn ghost block', onclick: () => go('invite') }, icon('send'), t('inviteAll'))) : null,
       people.length ? pushCard(t('pushAskOwner')) : null,
+      people.length ? todayCard({
+        pending: pending.length, pendingList: pending, payClaims: state.payClaims.length, readClaims: state.readClaims.length,
+        tariff: !!tariff.data, setPrices: () => tariffSheet(null, viewHome), missing: missingPeople.length, missingBuilding,
+        bills: bills.data.length > 0, makeBills: () => genBtn.click(), unsent: unsent.length, send: () => sendQueue(unsent),
+        unpaid: unpaid.length, late: late.filter((x) => !x.p.cut_at).length
+      }) : null,
       h('div', { class: 'cols' },
         h('div', { class: 'stack' },
           h('section', { class: 'hero-card' },
@@ -1300,18 +1318,28 @@
               h('span', null, `${t('oldUnpaid')}${sep()}${t('oldUnpaidSubs', { n: oldSubs })}`), h('strong', { class: 'amount' }, money(oldTotal))) : null),
           h('section', { class: 'card flush' },
             h('h3', { class: 'card-title' }, t('thisMonth')),
-            step(1, !!tariff.data, t('stepPrice'), tariff.data ? t('priceSet', { kwh: ltr(money(tariff.data.kwh_price)), amp: ltr(money(tariff.data.flat_amp_price)) }) : t('priceNotSet'), null, () => tariffSheet(tariff.data, viewHome)),
+            step(1, !!tariff.data, t('stepPrice'), tariff.data ? t('priceSet', { kwh: ltr(money(tariff.data.kwh_price)), amp: ltr(money(tariff.data.flat_amp_price)) }) + (aboveOfficial ? `${sep()}${t('aboveOfficial')}` : '') : t('priceNotSet'), null, () => tariffSheet(tariff.data, viewHome)),
             step(2, metered.length > 0 && readCount === metered.length, t('stepReadings'), (metered.length ? t('readingsCount', { n: readCount, total: metered.length }) : t('noMeteredShort')) + (waiting ? `${sep()}${t('draftsWaiting', { n: waiting })}` : ''), null, () => go('readings')),
             step(3, bills.data.length > 0, t('stepBills'), bills.data.length ? t('billsMade', { n: bills.data.length }) : t('billsNotMade'), genBtn))),
         h('div', { class: 'stack' },
+          state.payClaims.length ? h('section', { class: 'card flush', id: 'claims-card' },
+            h('h3', { class: 'card-title' }, t('claimsTitle'), h('span', { class: 'badge' }, state.payClaims.length)),
+            state.payClaims.map((c) => payClaimRow(c, viewHome))) : null,
+          state.readClaims.length ? h('section', { class: 'card flush', id: 'rclaims-card' },
+            h('h3', { class: 'card-title' }, t('readClaimsTitle'), h('span', { class: 'badge' }, state.readClaims.length)),
+            state.readClaims.map((c) => readClaimRow(c, viewHome))) : null,
           pending.length ? h('section', { class: 'card flush' },
             h('h3', { class: 'card-title' }, t('requests'), h('span', { class: 'badge' }, pending.length)),
             pending.map((p) => h('div', { class: 'item', role: 'button', tabindex: '0', onclick: () => requestSheet(p, viewHome) },
               avatar(p.info.name), h('div', { class: 'grow' }, h('strong', null, p.info.name || '—'),
                 h('small', { class: 'muted' }, [ltr(p.info.phone), p.info.building].filter(Boolean).join(sep()))),
               h('span', { class: 'pill partial' }, t('review'))))) : null,
+          late.length ? h('button', { type: 'button', class: 'late-row card', onclick: () => go('late') },
+            h('span', { class: 'row-ic bad' }, icon('bell')),
+            h('div', { class: 'grow' }, h('strong', null, t('lateTitle')), h('small', { class: 'muted' }, t('lateShort', { n: late.length }))),
+            h('span', { class: 'chev flip' }, '›')) : null,
           h('section', { class: 'card flush' },
-            h('h3', { class: 'card-title' }, t('toCollect'), unpaid.length > 6 ? h('button', { type: 'button', class: 'link', onclick: () => go('bills') }, t('seeAll')) : null),
+            h('h3', { class: 'card-title' }, t('toCollect'), unpaid.length ? h('button', { type: 'button', class: 'link', onclick: () => go('round') }, t('round')) : null, unpaid.length > 6 ? h('button', { type: 'button', class: 'link', onclick: () => go('bills') }, t('seeAll')) : null),
             unpaid.length ? unpaid.slice(0, 6).map((b) => billRow(b, viewHome))
               : h('p', { class: 'muted pad' }, bills.data.length ? t('allPaid') : t('noBillsYet'))),
           oldBills.length ? h('section', { class: 'card flush' },
@@ -1329,13 +1357,42 @@
         const last = await sb.from('tariffs').select('*').eq('business_id', biz.id).lt('month', m).order('month', { ascending: false }).limit(1).maybeSingle();
         seed = last.data;
       }
+      const offRes = await sb.from('official_prices').select('band, kwh_lbp, source').eq('month', m);
+      const offMap = new Map((offRes.data || []).map((o) => [o.band, o]));
+      const rate = Number(biz.lbp_rate) || 0;
+      const band = segmented('band', [['low', t('bandLow')], ['high', t('bandHigh')]], biz.band || 'low');
+      const officialVal = current && current.official_kwh_lbp ? current.official_kwh_lbp : offMap.has(biz.band || 'low') ? offMap.get(biz.band || 'low').kwh_lbp : '';
+      const official = input('official_kwh_lbp', { type: 'number', step: '1', min: '0', inputmode: 'numeric', value: officialVal });
+      const kwhInput = input('kwh_price', { type: 'number', step: '0.0001', min: '0', inputmode: 'decimal', value: seed ? seed.kwh_price : '' });
+      const offNote = h('small', { class: 'muted' });
+      const check = () => {
+        const o = num(official.value); const k = num(kwhInput.value);
+        if (!(o > 0) || !(rate > 0)) { offNote.textContent = rate > 0 ? t('officialHint') : t('officialNoRate'); offNote.className = 'muted'; return; }
+        const usd = o / rate;
+        const above = k > usd * 1.005;
+        offNote.textContent = `${t('officialUsd', { usd: `$${usd.toFixed(3)}`, rate: rate.toLocaleString('en-US') })}${above ? `${sep()}${t('aboveOfficialBy', { pct: Math.round((k / usd - 1) * 100) })}` : ''}`;
+        offNote.className = above ? 'bad' : 'ok';
+      };
+      band.addEventListener('change', () => {
+        const v = band.querySelector('input:checked').value;
+        if (offMap.has(v)) { official.value = offMap.get(v).kwh_lbp; check(); }
+      });
+      official.addEventListener('input', check);
+      kwhInput.addEventListener('input', check);
+      check();
       const close = sheet(`${t('stepPrice')}${sep()}${monthLabel(m)}`, h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
         e.preventDefault();
         const d = formData(e.target);
         const row = { kwh_price: num(d.kwh_price || 0), fixed_fee_per_amp: num(d.fixed_fee_per_amp || 0), flat_amp_price: num(d.flat_amp_price || 0) };
         if (Object.values(row).some((v) => !(v >= 0))) return toast(t('required'), 'bad');
+        row.official_kwh_lbp = num(d.official_kwh_lbp) > 0 ? Math.round(num(d.official_kwh_lbp)) : null;
         busy(save, true);
         try {
+          if (d.band && d.band !== (biz.band || 'low')) {
+            const b2 = await sb.from('businesses').update({ band: d.band }).eq('id', biz.id);
+            if (b2.error) throw b2.error;
+            biz.band = d.band;
+          }
           const res = current
             ? await sb.from('tariffs').update(row).eq('id', current.id)
             : await sb.from('tariffs').insert(Object.assign({ business_id: biz.id, month: m }, row));
@@ -1343,9 +1400,13 @@
           close(); toast(t('saved'), 'good'); after();
         } catch (err) { fail(err); } finally { busy(save, false); }
       } },
+        h('h4', null, t('officialTitle')),
+        field(t('area'), band),
+        field(t('officialKwh'), official),
+        offNote,
         h('h4', null, t('meteredSubs')),
         h('div', { class: 'grid2' },
-          field(t('kwhPrice'), input('kwh_price', { type: 'number', step: '0.0001', min: '0', inputmode: 'decimal', value: seed ? seed.kwh_price : '' })),
+          field(t('kwhPrice'), kwhInput),
           field(t('fixedFee'), input('fixed_fee_per_amp', { type: 'number', step: '0.01', min: '0', inputmode: 'decimal', value: seed ? seed.fixed_fee_per_amp : '' }))),
         h('h4', null, t('flatSubs')),
         field(t('flatAmp'), input('flat_amp_price', { type: 'number', step: '0.01', min: '0', inputmode: 'decimal', value: seed ? seed.flat_amp_price : '' })),
@@ -1414,7 +1475,18 @@
   async function viewPeople(filter) {
     const [people] = await Promise.all([loadPeople(), loadOpenBills()]);
     const q = (filter || '').toLowerCase();
-    const list = people.filter((p) => p.status !== 'pending' && (!q || [p.title, p.info.name, p.info.phone, p.info.building, p.info.meter].some((v) => (v || '').toLowerCase().includes(q))));
+    const chip = state.peopleChip || 'all';
+    const bld = state.peopleBuilding || '';
+    const tests = {
+      all: () => true, owes: (p) => debtTotal(p.id) > 0, metered: (p) => p.billing_type === 'metered', flat: (p) => p.billing_type === 'flat',
+      cut: (p) => !!p.cut_at, unlinked: (p) => p.status !== 'active'
+    };
+    const base = people.filter((p) => p.status !== 'pending');
+    const buildings = [...new Set(base.map((p) => p.info.building).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    const list = base.filter((p) => tests[chip](p) && (!bld || p.info.building === bld) && (!q || [p.title, p.info.name, p.info.phone, digits(p.info.phone), p.info.building, p.info.meter].some((v) => (v || '').toLowerCase().includes(q))));
+    const setChip = (c) => { state.peopleChip = c; viewPeople(filter).catch(fail); };
+    const setBld = (b) => { state.peopleBuilding = b === bld ? '' : b; viewPeople(filter).catch(fail); };
+    const chipKeys = ['all', 'owes', 'metered', 'flat', 'unlinked'].concat(base.some((p) => p.cut_at) ? ['cut'] : []);
     const search = input('q', { type: 'search', placeholder: t('search'), value: filter || '', class: 'search' });
     let tmr;
     search.addEventListener('input', () => { clearTimeout(tmr); tmr = setTimeout(() => viewPeople(search.value).then(() => {
@@ -1426,13 +1498,15 @@
         h('button', { type: 'button', class: 'btn ghost small', onclick: importSheet }, t('import')),
         h('button', { type: 'button', class: 'btn primary small desk-only', onclick: () => personForm(null, again) }, icon('plus'), t('add')))),
       people.length ? search : null,
+      base.length ? h('div', { class: 'chips' }, chipKeys.map((c) => h('button', { type: 'button', class: c === chip ? 'chip on' : 'chip', onclick: () => setChip(c) }, `${t(`pf_${c}`)} ${base.filter(tests[c]).length}`))) : null,
+      buildings.length > 1 && buildings.length <= 30 ? h('div', { class: 'chips' }, buildings.map((b) => h('button', { type: 'button', class: b === bld ? 'chip on' : 'chip', onclick: () => setBld(b) }, b))) : null,
       list.length ? h('div', { class: 'card flush grid-list' }, list.map((p) => h('div', { class: `item ${p.active ? '' : 'dim'}`, role: 'button', tabindex: '0', onclick: () => personSheet(p) },
         avatar(p.title),
         h('div', { class: 'grow' }, h('strong', null, p.title),
           h('small', { class: 'muted' }, [p.label && p.info.name !== p.label ? p.info.name : null, p.info.building, ltr(p.info.phone)].filter(Boolean).join(sep()))),
         h('div', { class: 'end-col' },
           h('span', { class: 'row' }, h('small', { class: 'muted' }, typeLabel(p.billing_type)), h('span', { class: 'pill amps' }, `${p.amps}A`)),
-          debtTotal(p.id) > 0
+          p.cut_at ? h('span', { class: 'state bad' }, t('cutState')) : debtTotal(p.id) > 0
             ? h('span', { class: 'state bad' }, t('owes', { amt: ltr(money(debtTotal(p.id))) }))
             : h('span', { class: `state ${p.status === 'active' ? 'ok' : ''}` }, p.status === 'active' ? t('linked') : t('notLinked'))))))
         : empty(people.length ? t('noResults') : t('noPeople'), h('button', { type: 'button', class: 'btn primary', onclick: () => personForm(null, again) }, icon('plus'), t('addSubscriber'))),
@@ -1613,22 +1687,31 @@
     try {
       if (!navigator.onLine) throw new Error('Failed to fetch');
       const people = (await loadPeople()).filter((p) => p.active && p.status !== 'pending' && p.billing_type === 'metered');
-      people.sort((a, b) => (a.info.building || '').localeCompare(b.info.building || '') || a.title.localeCompare(b.title));
+      people.sort(byPlace);
       const ids = people.map((p) => p.id);
       const rd = ids.length ? await sb.from('readings').select('id, subscriber_id, month, value, photo').in('subscriber_id', ids).lte('month', m).order('month', { ascending: false }) : { data: [] };
       if (rd.error) throw rd.error;
-      const cur = new Map(); const prev = new Map();
+      const cur = new Map(); const hist = new Map();
       for (const r of rd.data) {
         if (r.month === m) cur.set(r.subscriber_id, r);
-        else if (!prev.has(r.subscriber_id)) prev.set(r.subscriber_id, r.value);
+        else {
+          if (!hist.has(r.subscriber_id)) hist.set(r.subscriber_id, []);
+          hist.get(r.subscriber_id).push(Number(r.value));
+        }
       }
-      rows = people.map((s) => ({
-        id: s.id, title: s.title, sub: [s.info.building, s.info.meter && `#${s.info.meter}`].filter(Boolean).join(sep()),
-        prev: prev.has(s.id) ? Number(prev.get(s.id)) : Number(s.initial_reading),
+      rows = people.map((s) => {
+        const hs = hist.get(s.id) || [];
+        const prevVal = hs.length ? hs[0] : Number(s.initial_reading);
+        const before = hs.length > 1 ? hs[1] : hs.length ? Number(s.initial_reading) : null;
+        return {
+        id: s.id, title: s.title, building: s.info.building || '', sub: [s.info.floor && `${t('floor')} ${s.info.floor}`, s.info.meter && `#${s.info.meter}`].filter(Boolean).join(sep()),
+        prev: prevVal,
+        use: before !== null && prevVal > before ? Math.round((prevVal - before) * 10) / 10 : null,
         cur: cur.has(s.id) ? Number(cur.get(s.id).value) : null,
         rid: cur.has(s.id) ? cur.get(s.id).id : null,
         photo: cur.has(s.id) ? !!cur.get(s.id).photo : false
-      }));
+        };
+      });
       store.set(cacheKey, await V.enc(state.bk, rows));
     } catch (e) {
       const cached = isNetErr(e) ? await V.dec(state.bk, store.get(cacheKey)) : null;
@@ -1637,29 +1720,64 @@
     }
     const drafts = getDrafts(m);
     const inputs = [];
+    let claims = new Map();
+    if (!offline) {
+      const rc = await sb.from('reading_claims').select('subscriber_id, value, status').eq('business_id', state.business.id).eq('month', m).eq('status', 'pending');
+      if (!rc.error) claims = new Map(rc.data.map((c) => [c.subscriber_id, Number(c.value)]));
+    }
+    const unusual = (r, v) => r.use !== null && r.use > 0 && v - r.prev > Math.max(r.use * 3, r.use + 200);
     const items = rows.map((r) => {
       const start = drafts[r.id] !== undefined ? drafts[r.id] : r.cur !== null ? r.cur : '';
       const inp = input(`r_${r.id}`, { type: 'number', step: '0.01', min: '0', inputmode: 'decimal', enterkeyhint: 'next', value: start, placeholder: String(r.prev), class: 'reading-input' });
       const diff = h('small', { class: 'muted' });
       const upd = () => {
         const v = num(inp.value);
-        diff.textContent = inp.value === '' ? `${t('prev')}: ${r.prev}` : v < r.prev ? t('lowerThanPrev') : `+${(v - r.prev).toFixed(1)} ${t('kwh')}`;
-        diff.className = inp.value !== '' && v < r.prev ? 'bad' : 'muted';
+        const odd = inp.value !== '' && v >= r.prev && unusual(r, v);
+        diff.textContent = inp.value === '' ? `${t('prev')}: ${r.prev}` : v < r.prev ? t('lowerThanPrev') : odd ? t('muchHigher', { n: (v - r.prev).toFixed(0), usual: r.use }) : `+${(v - r.prev).toFixed(1)} ${t('kwh')}`;
+        diff.className = inp.value !== '' && (v < r.prev || odd) ? 'bad' : 'muted';
+        row.classList.toggle('odd', inp.value !== '' && (v < r.prev || odd));
       };
+      inp.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const i = inputs.findIndex((x) => x.inp === inp);
+        const nextInp = inputs[i + 1];
+        if (nextInp) { nextInp.inp.focus(); nextInp.inp.scrollIntoView({ block: 'center', behavior: 'smooth' }); } else inp.blur();
+      });
       inp.addEventListener('input', () => {
         upd();
         if (inp.value === '' || (r.cur !== null && num(inp.value) === r.cur)) delete drafts[r.id]; else drafts[r.id] = inp.value;
         setDrafts(m, drafts);
       });
+      const row = h('div', { class: 'item static' });
       upd();
       inputs.push({ r, inp });
       const hasPhoto = r.photo || pendingPhotos(m).includes(r.id);
       const cam = offline ? null : h('button', { type: 'button', class: `cam ${hasPhoto ? 'has' : ''}`, 'aria-label': hasPhoto ? t('photoRetake') : t('photoTake'), title: t('meterPhoto') }, icon('camera'));
       if (cam) cam.addEventListener('click', () => uploadMeterPhoto(r, m, cam));
-      return h('div', { class: 'item static' }, avatar(r.title),
-        h('div', { class: 'grow' }, h('strong', null, r.title), h('small', { class: 'muted' }, r.sub)),
+      const claimed = claims.get(r.id);
+      const useClaim = claimed !== undefined && inp.value === '' ? h('button', { type: 'button', class: 'link small', onclick: () => {
+        inp.value = String(claimed); inp.dispatchEvent(new Event('input')); useClaim.remove();
+      } }, t('useSent', { v: claimed })) : null;
+      row.append(avatar(r.title),
+        h('div', { class: 'grow' }, h('strong', null, r.title), r.sub ? h('small', { class: 'muted' }, r.sub) : null, useClaim),
         cam,
         h('div', { class: 'reading' }, inp, diff));
+      return row;
+    });
+    const grouped = [];
+    let lastB = null;
+    let box = null;
+    rows.forEach((r, i) => {
+      if (r.building !== lastB || !box) {
+        const inB = rows.filter((x) => x.building === r.building);
+        const done = inB.filter((x) => x.cur !== null || drafts[x.id] !== undefined).length;
+        grouped.push(h('h3', { class: 'group-title' }, r.building || t('noBuilding'), h('span', { class: `badge ${done === inB.length ? 'ok' : ''}` }, `${done}/${inB.length}`)));
+        box = h('div', { class: 'card flush grid-list' });
+        grouped.push(box);
+        lastB = r.building;
+      }
+      box.append(items[i]);
     });
     const save = h('button', { type: 'button', class: 'btn primary block sticky', onclick: async () => {
       const vals = {};
@@ -1669,6 +1787,8 @@
         if (!(v >= 0) || (r.cur !== null && r.cur === v)) continue;
         vals[r.id] = v;
       }
+      const odd = inputs.filter(({ r, inp }) => inp.value !== '' && (num(inp.value) < r.prev || unusual(r, num(inp.value)))).length;
+      if (odd && !(await confirmBox(t('unusualConfirm', { n: odd }), t('saveAnyway')))) return;
       if (!navigator.onLine) return toast(t('savedOffline', { n: Object.keys(vals).length }), 'warn');
       busy(save, true);
       try {
@@ -1682,13 +1802,14 @@
     } }, t('saveReadings'));
     render(head(t('stepReadings'), monthSwitch(viewReadings), 'home'),
       offline ? h('p', { class: 'notice-bar' }, t('offlineList')) : null,
-      items.length ? h('div', { class: 'card flush grid-list' }, items) : empty(t('noMetered')),
+      items.length ? h('div', { class: 'readings-list' }, grouped) : empty(t('noMetered')),
       items.length ? save : null);
   }
 
-  async function viewBills(status) {
+  async function viewBills(status, query) {
     status = status || state.billFilter || 'all';
     state.billFilter = null;
+    const q = (query || '').toLowerCase();
     const biz = state.business;
     const m = monthDate(state.month);
     const [, res] = await Promise.all([
@@ -1700,19 +1821,32 @@
     if (res.error) throw res.error;
     const data = res.data;
     const oldBills = state.openBills.filter((b) => b.month < m);
-    const again = () => viewBills(status).catch(fail);
+    const again = () => viewBills(status, query).catch(fail);
     const order = { unpaid: 0, partial: 1, paid: 2 };
+    const matches = (b) => {
+      if (!q) return true;
+      const p = state.people.find((x) => x.id === b.subscriber_id);
+      return !!p && [p.title, p.info.name, p.info.phone, digits(p.info.phone), p.info.building, p.info.meter].some((v) => (v || '').toLowerCase().includes(q));
+    };
     const byName = (a, b) => personName(a.subscriber_id).localeCompare(personName(b.subscriber_id));
-    const list = status === 'old'
+    const list = (status === 'old'
       ? oldBills.slice().sort((a, b) => byName(a, b) || a.month.localeCompare(b.month))
-      : data.filter((b) => status === 'all' || b.status === status).sort((a, b) => order[a.status] - order[b.status] || byName(a, b));
+      : data.filter((b) => status === 'all' || b.status === status).sort((a, b) => order[a.status] - order[b.status] || byName(a, b))).filter(matches);
+    const search = input('q', { type: 'search', placeholder: t('searchBills'), value: query || '', class: 'search' });
+    let tmr;
+    search.addEventListener('input', () => { clearTimeout(tmr); tmr = setTimeout(() => viewBills(status, search.value).then(() => {
+      const el = $app.querySelector('input[name=q]'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+    }).catch(fail), 250); });
     const count = (s) => (s === 'old' ? oldBills.length : data.filter((b) => s === 'all' || b.status === s).length);
     const toSend = list.filter((b) => owed(b) > 0);
     render(head(t('tabBills'), monthSwitch(again)),
+      data.length || oldBills.length ? search : null,
       h('div', { class: 'chips' }, ['all', 'unpaid', 'partial', 'paid', 'old'].map((f) => h('button', {
-        type: 'button', class: `${f === status ? 'chip on' : 'chip'}${f === 'old' && oldBills.length ? ' alert' : ''}`, onclick: () => viewBills(f).catch(fail)
+        type: 'button', class: `${f === status ? 'chip on' : 'chip'}${f === 'old' && oldBills.length ? ' alert' : ''}`, onclick: () => viewBills(f, query).catch(fail)
       }, `${f === 'old' ? t('oldUnpaid') : t(f)} ${count(f)}`))),
-      toSend.length ? h('button', { type: 'button', class: 'btn wa block', onclick: () => sendQueue(toSend) }, icon('chat'), t('sendAll', { n: toSend.length })) : null,
+      state.openBills.some((b) => owed(b) > 0) ? h('div', { class: 'grid2' },
+        toSend.length ? h('button', { type: 'button', class: 'btn wa', onclick: () => sendQueue(toSend) }, icon('chat'), t('sendAll', { n: toSend.length })) : null,
+        h('button', { type: 'button', class: 'btn ghost', onclick: () => go('round') }, icon('people'), t('round'))) : null,
       list.length ? h('div', { class: 'card flush grid-list' }, list.map((b) => billRow(b, again)))
         : empty(data.length || status === 'old' ? t('noResults') : t('noBills'), !data.length && status !== 'old' ? h('button', { type: 'button', class: 'btn primary', onclick: () => go('home') }, t('goHome')) : null));
   }
@@ -1822,6 +1956,7 @@
     render(head(state.business.name, h('button', { type: 'button', class: 'icon-btn', onclick: again, 'aria-label': t('refresh') }, '↻')),
       h('section', { class: 'hero-card' }, h('small', null, t('toCollect')), h('div', { class: 'hero-num' }, money(total)),
         h('div', { class: 'row between' }, h('span', null, t('unpaidCount', { n: state.openBills.length })), h('span', null, state.role.name))),
+      state.openBills.length ? h('button', { type: 'button', class: 'btn primary block', onclick: () => go('round') }, icon('people'), t('roundStart')) : null,
       search,
       list.length ? h('div', { class: 'card flush grid-list' }, list.map((b) => billRow(b, again))) : empty(q ? t('noResults') : t('allPaid')));
   }
@@ -1845,11 +1980,7 @@
         h('div', { class: 'grow' }, h('strong', null, personName(x.bills && x.bills.subscriber_id)),
           h('small', { class: 'muted' }, [x.bills ? monthLabel(x.bills.month) : '', t(x.method), new Date(x.paid_at).toLocaleTimeString(state.lang === 'ar' ? 'ar-LB' : 'en-GB', { hour: '2-digit', minute: '2-digit' })].filter(Boolean).join(sep()))),
         h('div', { class: 'end-col' }, h('strong', { class: 'amount' }, payText(x)),
-          h('button', { type: 'button', class: 'link bad', onclick: async () => {
-            const { error } = await sb.from('payments').delete().eq('id', x.id);
-            if (error) return fail(error);
-            viewToday().catch(fail);
-          } }, t('undo'))))))
+          h('button', { type: 'button', class: 'link bad', onclick: () => removePayment(x, () => viewToday().catch(fail)) }, t('undo'))))))
         : empty(t('nothingToday')));
   }
 
@@ -1925,7 +2056,8 @@
             stat(t('oldUnpaid'), money(oldTotal), oldTotal > 0 ? 'bad' : ''),
             stat(t('billsCount'), String(bills.length)), stat(t('kwhTotal'), String(Math.round(sum(bills, (b) => b.kwh))))),
           h('button', { type: 'button', class: 'btn ghost block', onclick: exportBills }, icon('bills'), t('exportBills')),
-          h('button', { type: 'button', class: 'btn ghost block', onclick: () => exportPays().catch(fail) }, icon('bills'), t('exportPayments'))),
+          h('button', { type: 'button', class: 'btn ghost block', onclick: () => exportPays().catch(fail) }, icon('bills'), t('exportPayments')),
+          h('button', { type: 'button', class: 'btn ghost block', onclick: () => go('costs') }, icon('tag'), t('costsTitle'))),
         h('div', { class: 'stack' },
           h('section', { class: 'card flush' }, h('h3', { class: 'card-title' }, t('byMethod')),
             methods.length ? methods.map(([k, v]) => stat(k, money(v))) : h('p', { class: 'muted pad' }, t('noPaymentsYet'))),
@@ -1992,12 +2124,17 @@
     const active = state.subs.filter((s) => s.status === 'active');
     const waiting = state.subs.filter((s) => s.status === 'pending');
     const ids = active.map((s) => s.id);
-    const [res, ph] = ids.length ? await Promise.all([
+    const [res, ph, pc, rc] = ids.length ? await Promise.all([
       sb.from('bills').select('*, payments(amount, method, paid_at, lbp_amount)').in('subscriber_id', ids).order('month', { ascending: false }).limit(60),
-      sb.from('readings').select('subscriber_id, month').in('subscriber_id', ids).eq('photo', true).order('month', { ascending: false }).limit(60)
-    ]) : [{ data: [] }, { data: [] }];
+      sb.from('readings').select('subscriber_id, month').in('subscriber_id', ids).eq('photo', true).order('month', { ascending: false }).limit(60),
+      sb.from('payment_claims').select('bill_id, amount, method, status, created_at').in('subscriber_id', ids).eq('status', 'pending'),
+      sb.from('reading_claims').select('subscriber_id, month, value, status').in('subscriber_id', ids).eq('month', monthDate(currentMonth()))
+    ]) : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }];
     if (res.error) throw res.error;
     const photos = new Set((ph.data || []).map((r) => `${r.subscriber_id}:${r.month}`));
+    const claimOf = new Map((pc.data || []).map((c) => [c.bill_id, c]));
+    const readOf = new Map((rc.data || []).map((c) => [c.subscriber_id, c]));
+    const again = () => viewMyBills().catch(fail);
     render(head(t('tabBills'), h('button', { type: 'button', class: 'icon-btn', onclick: refresh, 'aria-label': t('refresh') }, '↻')),
       active.length ? pushCard(t('pushAskSub')) : null,
       waiting.map((s) => h('section', { class: 'card stack center-card' },
@@ -2017,7 +2154,15 @@
               h('span', null, due > 0 ? `≈ ${lbp(due, biz.lbp_rate)} ${t('lbpUnit')}` : t('nothingDue')),
               h('span', null, `${s.amps}A${sep()}${typeLabel(s.billing_type)}`)),
             oldDue > 0 ? h('div', { class: 'old-row' }, h('span', null, t('includesOld', { amt: ltr(money(oldDue)) }))) : null,
+            s.cut_at ? h('div', { class: 'old-row' }, h('strong', null, t('youAreCut'))) : null,
+            s.billing_type === 'metered' ? (() => {
+              const rcl = readOf.get(s.id);
+              if (rcl && rcl.status === 'pending') return h('div', { class: 'old-row' }, h('span', null, t('readingWaiting', { v: Number(rcl.value) })));
+              if (rcl && rcl.status === 'accepted') return h('div', { class: 'old-row' }, h('span', null, t('readingAccepted', { v: Number(rcl.value) })));
+              return h('button', { type: 'button', class: 'btn glass block', onclick: () => readingSheet(s, again) }, icon('camera'), t('sendReading'));
+            })() : null,
             biz.phone ? h('a', { class: 'btn glass block', href: `tel:+${intlPhone(biz.phone)}` }, icon('phone'), t('callOwner')) : null),
+          usageChart(mine),
           h('section', { class: 'card flush' },
             h('h3', { class: 'card-title' }, t('history')),
             mine.length ? mine.map((b) => h('details', { class: 'item col' },
@@ -2028,7 +2173,9 @@
                 h('small', null, billDetail(b)),
                 h('small', { class: 'muted' }, `≈ ${lbp(b.amount, biz.lbp_rate)} ${t('lbpUnit')}`),
                 (b.payments || []).map((p) => h('small', { class: 'ok' }, `✓ ${payText(p)}${sep()}${t(p.method)}${sep()}${dateLabel(p.paid_at)}`)),
-                photos.has(`${s.id}:${b.month}`) && s.sk ? h('button', { type: 'button', class: 'btn ghost small', onclick: () => showPhoto(s.sk, s.business_id, s.id, b.month, biz.name) }, icon('camera'), t('meterPhoto')) : null)))
+                photos.has(`${s.id}:${b.month}`) && s.sk ? h('button', { type: 'button', class: 'btn ghost small', onclick: () => showPhoto(s.sk, s.business_id, s.id, b.month, biz.name) }, icon('camera'), t('meterPhoto')) : null,
+                claimOf.has(b.id) ? h('small', { class: 'warn-text' }, t('claimWaiting', { amt: money(claimOf.get(b.id).amount), m: claimOf.get(b.id).method === 'omt' ? 'OMT' : claimOf.get(b.id).method === 'whish' ? 'Whish' : t('other') }))
+                  : Number(b.amount) > Number(b.paid_amount) ? h('button', { type: 'button', class: 'btn ghost small', onclick: () => claimSheet(s, b, again) }, icon('check'), t('iPaid')) : null)))
               : h('p', { class: 'muted pad' }, t('noSubscriptionBills'))));
       }));
   }
@@ -2230,11 +2377,11 @@
     } catch (e) { fail(e); } finally { busy(btn, false); }
   }
 
-  async function showPhoto(sk, bizId, subId, month, title) {
+  async function showPhoto(sk, bizId, subId, month, title, path) {
     const body = h('div', { class: 'stack' }, h('div', { class: 'skeleton photo' }));
     sheet(title || t('meterPhoto'), body);
     try {
-      const { data, error } = await sb.storage.from('meters').download(photoPath(bizId, subId, month));
+      const { data, error } = await sb.storage.from('meters').download(path || photoPath(bizId, subId, month));
       if (error) throw error;
       const bytes = await V.decBytes(sk, await data.arrayBuffer());
       if (!bytes) throw new Error('decrypt');
@@ -2478,7 +2625,7 @@
           if (made.length) linkQueue(made);
         } catch (e) { fail(e); go1.textContent = t('importGo', { n: res.ok.length }); } finally { busy(go1, false); }
       });
-      body.replaceChildren(
+      body.replaceChildren(h('div', { class: 'stack' },
         h('div', { class: 'summary' }, h('strong', null, name),
           h('span', { class: 'ok' }, t('importReady', { n: res.ok.length })),
           res.bad.length ? h('span', { class: 'bad' }, t('importSkipped', { n: res.bad.length })) : null),
@@ -2489,7 +2636,7 @@
         res.bad.length ? h('details', { class: 'import-bad' }, h('summary', null, t('importProblems')),
           h('div', { class: 'stack tight' }, res.bad.slice(0, 50).map((b) => h('small', null, `${t('rowN', { n: b.line })}${b.name ? ` (${b.name})` : ''}: ${b.why}`)))) : null,
         go1,
-        h('button', { type: 'button', class: 'btn ghost block', onclick: start }, t('importAgain')));
+        h('button', { type: 'button', class: 'btn ghost block', onclick: start }, t('importAgain'))));
     };
     start();
   }
@@ -2518,6 +2665,731 @@
     draw();
   }
 
+  function paymentToast(msg, pays, after) {
+    toast(msg, 'good', { label: t('undoAction'), fn: async () => {
+      for (const x of pays) {
+        const { error } = await sb.from('payments').delete().eq('id', x.id);
+        if (error) return fail(error);
+      }
+      toast(t('paymentUndone'));
+      after();
+    } });
+  }
+
+  async function removePayment(pay, after) {
+    const { error } = await sb.from('payments').delete().eq('id', pay.id);
+    if (error) return fail(error);
+    after();
+    toast(t('paymentRemoved'), null, { label: t('undoAction'), fn: async () => {
+      const row = { bill_id: pay.bill_id, amount: pay.amount, method: pay.method, paid_at: pay.paid_at };
+      if (pay.note) row.note = pay.note;
+      if (pay.lbp_amount) { row.lbp_amount = pay.lbp_amount; row.lbp_rate = pay.lbp_rate; }
+      const res = await sb.from('payments').insert(row);
+      if (res.error) return fail(res.error);
+      after();
+    } });
+  }
+
+  async function payOldestFirst(bills, amount, method) {
+    const pays = [];
+    let rest = Math.round(amount * 100) / 100;
+    for (const b of bills.slice().sort((a, c) => a.month.localeCompare(c.month))) {
+      if (rest <= 0) break;
+      const a = Math.min(rest, owed(b));
+      if (a <= 0) continue;
+      pays.push(await payBill(b, a, method || 'cash'));
+      rest = Math.round((rest - a) * 100) / 100;
+    }
+    return pays;
+  }
+
+  function groupOpen() {
+    const by = new Map();
+    for (const b of state.openBills) {
+      if (owed(b) <= 0) continue;
+      if (!by.has(b.subscriber_id)) by.set(b.subscriber_id, []);
+      by.get(b.subscriber_id).push(b);
+    }
+    return by;
+  }
+
+  function floorNo(p) { return parseInt(digits(p.info.floor), 10) || 0; }
+  function byPlace(a, b) {
+    return (a.info.building || '').localeCompare(b.info.building || '') || floorNo(a) - floorNo(b) || a.title.localeCompare(b.title);
+  }
+
+  function awayKey() { return `away:${state.business.id}:${new Date().toISOString().slice(0, 10)}`; }
+  function awaySet() { try { return new Set(JSON.parse(store.get(awayKey()) || '[]')); } catch { return new Set(); } }
+
+  async function viewRound() {
+    await Promise.all([loadPeople(), loadOpenBills()]);
+    const by = groupOpen();
+    const away = awaySet();
+    const people = [...by.keys()].map((id) => state.people.find((p) => p.id === id)).filter(Boolean).sort(byPlace);
+    const here = people.filter((p) => !away.has(p.id));
+    const later = people.filter((p) => away.has(p.id));
+    const dueOf = (p) => by.get(p.id).reduce((a, b) => a + owed(b), 0);
+    const total = people.reduce((a, p) => a + dueOf(p), 0);
+    const again = () => viewRound().catch(fail);
+    const setAway = (id, on) => {
+      const s = awaySet();
+      if (on) s.add(id); else s.delete(id);
+      store.set(awayKey(), JSON.stringify([...s]));
+      again();
+    };
+    const card = (p) => {
+      const bills = by.get(p.id).slice().sort((a, b) => a.month.localeCompare(b.month));
+      const due = dueOf(p);
+      const paid = h('button', { type: 'button', class: 'btn primary' }, icon('check'), t('roundPaid'));
+      paid.addEventListener('click', async () => {
+        busy(paid, true);
+        try {
+          const pays = await payOldestFirst(bills, due, 'cash');
+          setAway(p.id, false);
+          paymentToast(t('markedPaid', { name: p.title }), pays, again);
+        } catch (e) { fail(e); busy(paid, false); }
+      });
+      const part = h('button', { type: 'button', class: 'btn ghost', onclick: () => partSheet(p, bills, due, again) }, t('roundPart'));
+      const out = away.has(p.id)
+        ? h('button', { type: 'button', class: 'btn ghost', onclick: () => setAway(p.id, false) }, t('roundBack'))
+        : h('button', { type: 'button', class: 'btn ghost', onclick: () => setAway(p.id, true) }, t('roundAway'));
+      return h('article', { class: 'card round-card' },
+        h('div', { class: 'row between top' },
+          h('div', { class: 'grow' }, h('strong', null, p.title),
+            h('small', { class: 'muted' }, [p.info.floor ? `${t('floor')} ${p.info.floor}` : null, bills.length > 1 ? t('monthsN', { n: bills.length }) : monthLabel(bills[0].month)].filter(Boolean).join(sep())),
+            p.cut_at ? h('span', { class: 'pill bad' }, t('cutState')) : null),
+          h('strong', { class: 'amount round-due' }, money(due))),
+        h('div', { class: 'round-btns' }, paid, part, out),
+        p.info.phone ? h('a', { class: 'link small', href: `tel:+${intlPhone(p.info.phone)}` }, icon('phone'), ltr(p.info.phone)) : null);
+    };
+    const groups = [];
+    let last = null;
+    for (const p of here) {
+      const bld = p.info.building || t('noBuilding');
+      if (bld !== last) {
+        const n = here.filter((x) => (x.info.building || t('noBuilding')) === bld).length;
+        groups.push(h('h3', { class: 'group-title' }, bld, h('span', { class: 'badge' }, n)));
+        last = bld;
+      }
+      groups.push(card(p));
+    }
+    render(head(t('round'), null, state.mode === 'collector' ? 'collect' : 'bills'),
+      h('section', { class: 'hero-card' }, h('small', null, t('roundLeft', { n: here.length })),
+        h('div', { class: 'hero-num' }, money(total)),
+        h('div', { class: 'row between' }, h('span', null, t('roundHint')), later.length ? h('span', null, t('roundAwayN', { n: later.length })) : null)),
+      people.length ? null : empty(t('allPaid')),
+      groups,
+      later.length ? h('h3', { class: 'group-title' }, t('roundComeBack'), h('span', { class: 'badge' }, later.length)) : null,
+      later.map(card));
+  }
+
+  function partSheet(p, bills, due, after) {
+    const amount = input('amount', { type: 'number', step: '0.01', min: '0', inputmode: 'decimal', value: '' });
+    const save = h('button', { type: 'submit', class: 'btn primary block' }, t('recordPayment'));
+    const close = sheet(p.title, h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
+      e.preventDefault();
+      const d = formData(e.target);
+      const a = Math.round(num(amount.value) * 100) / 100;
+      if (!(a > 0)) return toast(t('required'), 'bad');
+      if (a > due + 0.001) return toast(t('overpayment'), 'bad');
+      busy(save, true);
+      try {
+        const pays = await payOldestFirst(bills, a, d.method);
+        close();
+        paymentToast(t('paymentSaved'), pays, after);
+        after();
+      } catch (err) { fail(err); } finally { busy(save, false); }
+    } },
+      h('div', { class: 'summary' }, h('span', { class: 'muted' }, t('totalOwed')), h('strong', { class: 'amount' }, money(due))),
+      field(t('amount'), amount),
+      h('div', { class: 'chips' }, [0.25, 0.5, 0.75].map((f) => h('button', { type: 'button', class: 'chip', onclick: () => { amount.value = (Math.round(due * f * 100) / 100).toFixed(2); } }, `${Math.round(f * 100)}%`))),
+      segmented('method', [['cash', t('cash')], ['whish', 'Whish'], ['omt', 'OMT'], ['other', t('other')]], 'cash'),
+      h('small', { class: 'muted' }, t('oldestFirst')),
+      save));
+    setTimeout(() => amount.focus(), 250);
+  }
+
+  function lateRows() {
+    const by = groupOpen();
+    return state.people.filter((p) => p.status !== 'pending').map((p) => {
+      const bills = by.get(p.id) || [];
+      return { p, bills, months: new Set(bills.map((b) => b.month)).size, due: bills.reduce((a, b) => a + owed(b), 0) };
+    }).filter((x) => x.months >= 2 || x.p.cut_at).sort((a, b) => b.due - a.due);
+  }
+
+  function lateMsg(x) {
+    return [t('lateMsg', { biz: state.business.name, name: x.p.info.name || '', amt: money(x.due), n: x.months }),
+      x.p.sk && x.p.invite_code ? inviteUrl(x.p) : ''].filter(Boolean).join('\n');
+  }
+
+  async function viewLate() {
+    await Promise.all([loadPeople(), loadOpenBills()]);
+    const rows = lateRows();
+    const again = () => viewLate().catch(fail);
+    const warnBtn = h('button', { type: 'button', class: 'btn ghost block' }, icon('bell'), t('warnAllPush'));
+    warnBtn.addEventListener('click', async () => {
+      busy(warnBtn, true);
+      try {
+        const { data, error } = await sb.rpc('warn_late', { p_subs: rows.filter((x) => x.due > 0).map((x) => x.p.id) });
+        if (error) throw error;
+        toast(t('warnedN', { n: data }), 'good');
+      } catch (e) { fail(e); } finally { busy(warnBtn, false); }
+    });
+    const withPhone = rows.filter((x) => x.due > 0 && x.p.info.phone);
+    render(head(t('lateTitle'), null, 'home'),
+      h('p', { class: 'muted' }, t('lateBody')),
+      rows.length ? h('div', { class: 'stack' },
+        withPhone.length ? h('button', { type: 'button', class: 'btn wa block', onclick: () => msgQueue(withPhone.map((x) => ({ p: x.p, text: lateMsg(x), sub: `${t('monthsN', { n: x.months })}${sep()}${money(x.due)}` })), t('lateTitle')) }, icon('chat'), t('warnAllWa', { n: withPhone.length })) : null,
+        warnBtn,
+        h('div', { class: 'card flush grid-list' }, rows.map((x) => h('div', { class: 'item static' },
+          avatar(x.p.title),
+          h('div', { class: 'grow' }, h('strong', null, x.p.title),
+            h('small', { class: x.months >= 3 ? 'bad' : 'muted' }, [t('monthsN', { n: x.months }), x.p.info.building].filter(Boolean).join(sep())),
+            x.p.cut_at ? h('span', { class: 'pill bad' }, `${t('cutState')}${sep()}${dateLabel(x.p.cut_at)}`) : null),
+          h('div', { class: 'end-col' }, h('strong', { class: 'amount' }, money(x.due)),
+            h('span', { class: 'row' },
+              x.p.info.phone && x.due > 0 ? h('button', { type: 'button', class: 'link', onclick: () => openExternal(waLink(x.p.info.phone, lateMsg(x))) }, 'WhatsApp') : null,
+              x.p.cut_at
+                ? h('button', { type: 'button', class: 'link ok', onclick: () => reconnectSheet(x, again) }, t('reconnect'))
+                : h('button', { type: 'button', class: 'link bad', onclick: async () => {
+                  if (!(await confirmBox(t('cutConfirm', { name: x.p.title }), t('cut')))) return;
+                  const { error } = await sb.from('subscribers').update({ cut_at: new Date().toISOString() }).eq('id', x.p.id);
+                  if (error) return fail(error);
+                  toast(t('cutDone', { name: x.p.title }), 'warn');
+                  again();
+                } }, t('cut'))))))))
+        : empty(t('noLate')));
+  }
+
+  function reconnectSheet(x, after) {
+    const fee = input('fee', { type: 'number', step: '0.01', min: '0', inputmode: 'decimal', value: store.get(`fee:${state.business.id}`) || '' });
+    const save = h('button', { type: 'submit', class: 'btn primary block' }, t('reconnect'));
+    const close = sheet(`${t('reconnect')}${sep()}${x.p.title}`, h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
+      e.preventDefault();
+      const f = fee.value === '' ? 0 : Math.round(num(fee.value) * 100) / 100;
+      if (!(f >= 0) || f > 10000) return toast(t('required'), 'bad');
+      busy(save, true);
+      try {
+        if (f > 0) {
+          let target = x.bills.slice().sort((a, b) => b.month.localeCompare(a.month))[0];
+          if (!target) {
+            const lastBill = await sb.from('bills').select('id').eq('subscriber_id', x.p.id).order('month', { ascending: false }).limit(1).maybeSingle();
+            if (lastBill.error) throw lastBill.error;
+            target = lastBill.data;
+          }
+          if (!target) throw new Error('no_bill');
+          const r = await sb.rpc('add_fee', { p_bill: target.id, p_amount: f });
+          if (r.error) throw r.error;
+          store.set(`fee:${state.business.id}`, String(f));
+        }
+        const { error } = await sb.from('subscribers').update({ cut_at: null }).eq('id', x.p.id);
+        if (error) throw error;
+        close(); toast(t('reconnected', { name: x.p.title }), 'good'); after();
+      } catch (err) { if (String(err && err.message) === 'no_bill') toast(t('noBillForFee'), 'bad'); else fail(err); } finally { busy(save, false); }
+    } },
+      field(t('reconnectFee'), fee, t('reconnectFeeHint')), save));
+  }
+
+  function msgQueue(items, title) {
+    let i = 0;
+    const body = h('div', { class: 'stack' });
+    const close = sheet(title, body);
+    const draw = () => {
+      if (i >= items.length) {
+        body.replaceChildren(h('div', { class: 'empty' }, h('p', null, t('allLinksSent', { n: items.length })),
+          h('button', { type: 'button', class: 'btn primary', onclick: () => close() }, t('close'))));
+        return;
+      }
+      const x = items[i];
+      const bar = h('div', { class: 'bar dark' }, h('i'));
+      bar.firstChild.style.width = `${Math.round((i / items.length) * 100)}%`;
+      body.replaceChildren(
+        h('small', { class: 'muted' }, t('sendProgress', { i: i + 1, n: items.length })), bar,
+        h('div', { class: 'summary' }, h('strong', null, x.p.title), x.sub ? h('span', null, x.sub) : null, h('span', { class: 'muted' }, ltr(x.p.info.phone))),
+        h('button', { type: 'button', class: 'btn wa block', onclick: () => { openExternal(waLink(x.p.info.phone, x.text)); i++; draw(); } }, icon('chat'), t('openWhatsApp')),
+        h('button', { type: 'button', class: 'btn ghost block', onclick: () => { i++; draw(); } }, t('skip')));
+    };
+    draw();
+  }
+
+  const COST_KINDS = ['diesel', 'oil', 'repair', 'salary', 'other'];
+
+  async function viewCosts() {
+    const biz = state.business;
+    const m = monthDate(state.month);
+    const next = monthDate(shiftMonth(state.month, 1));
+    const [exp, bills] = await Promise.all([
+      sb.from('expenses').select('*').eq('business_id', biz.id).gte('day', m).lt('day', next).order('day', { ascending: false }),
+      sb.from('bills').select('amount, paid_amount, kwh, fixed_fee, billing_type').eq('business_id', biz.id).eq('month', m)
+    ]);
+    if (exp.error) throw exp.error;
+    if (bills.error) throw bills.error;
+    const list = exp.data;
+    for (const x of list) x.text = x.note ? ((await V.dec(state.bk, x.note)) || {}).t || '' : '';
+    const sum = (arr, f) => arr.reduce((a, x) => a + Number(f(x) || 0), 0);
+    const costs = sum(list, (x) => x.amount);
+    const billed = sum(bills.data, (b) => b.amount);
+    const collected = sum(bills.data, (b) => b.paid_amount);
+    const kwh = sum(bills.data, (b) => b.kwh);
+    const fixedIncome = sum(bills.data, (b) => (b.billing_type === 'metered' ? b.fixed_fee : b.amount));
+    const liters = sum(list.filter((x) => x.kind === 'diesel'), (x) => x.liters);
+    const diesel = sum(list.filter((x) => x.kind === 'diesel'), (x) => x.amount);
+    const breakEven = kwh > 0 ? Math.max(0, (costs - fixedIncome) / kwh) : null;
+    const withMargin = kwh > 0 ? Math.max(0, (costs * 1.2 - fixedIncome) / kwh) : null;
+    const again = () => viewCosts().catch(fail);
+    const stat = (label, value, cls) => h('div', { class: 'item static' }, h('div', { class: 'grow' }, h('span', null, label)), h('strong', { class: `amount ${cls || ''}` }, value));
+    const kind = segmented('kind', COST_KINDS.map((k) => [k, t(`cost_${k}`)]), 'diesel');
+    const litersField = field(t('liters'), input('liters', { type: 'number', step: '0.1', min: '0', inputmode: 'decimal' }));
+    kind.addEventListener('change', () => { litersField.hidden = kind.querySelector('input:checked').value !== 'diesel'; });
+    const save = h('button', { type: 'submit', class: 'btn primary block' }, t('addCost'));
+    const today = new Date().toISOString().slice(0, 10);
+    const inMonth = today >= m && today < next;
+    render(head(t('costsTitle'), monthSwitch(again), 'more'),
+      h('div', { class: 'cols' },
+        h('div', { class: 'stack' },
+          h('section', { class: `hero-card ${collected - costs >= 0 ? 'clear' : ''}` },
+            h('small', null, t('profitMonth')),
+            h('div', { class: 'hero-num' }, money(collected - costs)),
+            h('div', { class: 'row between' }, h('span', null, t('ifAllPay')), h('strong', { class: 'amount' }, money(billed - costs)))),
+          h('section', { class: 'card flush' },
+            stat(t('collectedTotal'), money(collected), 'ok'),
+            stat(t('costsTotal'), money(costs), costs > 0 ? 'bad' : ''),
+            liters > 0 ? stat(t('dieselLiters'), `${Math.round(liters)} L${sep()}${money(diesel / liters)}/L`) : null,
+            stat(t('kwhTotal'), String(Math.round(kwh))),
+            breakEven !== null ? stat(t('breakEven'), `${money(breakEven)}/kWh`) : null,
+            withMargin !== null ? stat(t('withMargin'), `${money(withMargin)}/kWh`, 'ok') : null),
+          kwh > 0 && costs > 0 ? h('p', { class: 'muted small' }, t('priceAdvice')) : null),
+        h('div', { class: 'stack' },
+          h('form', { class: 'card stack', novalidate: true, onsubmit: async (e) => {
+            e.preventDefault();
+            const d = formData(e.target);
+            const amount = Math.round(num(d.amount) * 100) / 100;
+            if (!(amount > 0)) return toast(t('required'), 'bad');
+            const row = { business_id: biz.id, kind: d.kind, amount, day: d.day || (inMonth ? today : m) };
+            if (d.kind === 'diesel' && num(d.liters) > 0) row.liters = num(d.liters);
+            if (clean(d.note, 200)) row.note = await V.enc(state.bk, { t: clean(d.note, 200) });
+            busy(save, true);
+            try {
+              const res = await sb.from('expenses').insert(row);
+              if (res.error) throw res.error;
+              toast(t('saved'), 'good'); again();
+            } catch (err) { fail(err); } finally { busy(save, false); }
+          } },
+            h('h3', null, t('addCost')), kind,
+            h('div', { class: 'grid2' },
+              field(t('amount'), input('amount', { type: 'number', step: '0.01', min: '0', inputmode: 'decimal' })),
+              field(t('date'), input('day', { type: 'date', value: inMonth ? today : m, min: m, max: monthDate(shiftMonth(state.month, 1)) }))),
+            litersField,
+            field(t('note'), input('note', { maxlength: 200 })),
+            save),
+          list.length ? h('section', { class: 'card flush' }, h('h3', { class: 'card-title' }, t('costsList')),
+            list.map((x) => h('div', { class: 'item static' },
+              h('div', { class: 'grow' }, h('strong', null, t(`cost_${x.kind}`)),
+                h('small', { class: 'muted' }, [dateLabel(x.day), x.liters ? `${Number(x.liters)} L` : null, x.text].filter(Boolean).join(sep()))),
+              h('div', { class: 'end-col' }, h('strong', { class: 'amount' }, money(x.amount)),
+                h('button', { type: 'button', class: 'link bad', onclick: async () => {
+                  const { error } = await sb.from('expenses').delete().eq('id', x.id);
+                  if (error) return fail(error);
+                  again();
+                  toast(t('costRemoved'), null, { label: t('undoAction'), fn: async () => {
+                    const back = { business_id: x.business_id, kind: x.kind, amount: x.amount, day: x.day, liters: x.liters, note: x.note };
+                    const r = await sb.from('expenses').insert(back);
+                    if (r.error) return fail(r.error);
+                    again();
+                  } });
+                } }, t('delete'))))))
+            : empty(t('noCosts')))));
+  }
+
+  async function loadClaims() {
+    const biz = state.business;
+    const [pc, rc] = await Promise.all([
+      sb.from('payment_claims').select(`*, bills(*, payments(${PAY}))`).eq('business_id', biz.id).eq('status', 'pending').order('created_at'),
+      sb.from('reading_claims').select('*').eq('business_id', biz.id).eq('status', 'pending').order('created_at')
+    ]);
+    if (pc.error) throw pc.error;
+    if (rc.error) throw rc.error;
+    for (const c of pc.data) {
+      const p = state.people.find((x) => x.id === c.subscriber_id);
+      c.refText = c.ref && p && p.sk ? ((await V.dec(p.sk, c.ref)) || {}).t || '' : '';
+    }
+    state.payClaims = pc.data;
+    state.readClaims = rc.data;
+  }
+
+  function payClaimRow(c, after) {
+    const p = state.people.find((x) => x.id === c.subscriber_id);
+    const name = p ? p.title : '—';
+    const ok = h('button', { type: 'button', class: 'btn primary small' }, t('confirm'));
+    ok.addEventListener('click', async () => {
+      busy(ok, true);
+      try {
+        const left = c.bills ? owed(c.bills) : 0;
+        if (left > 0) await payBill(c.bills, Math.min(Number(c.amount), left), c.method, [c.method === 'omt' ? 'OMT' : 'Whish', c.refText].filter(Boolean).join(' '));
+        const { error } = await sb.from('payment_claims').update({ status: 'accepted', decided_at: new Date().toISOString() }).eq('id', c.id);
+        if (error) throw error;
+        toast(left > 0 ? t('claimAccepted', { name }) : t('alreadyPaidBill'), left > 0 ? 'good' : 'warn');
+        after();
+      } catch (e) { fail(e); busy(ok, false); }
+    });
+    const no = h('button', { type: 'button', class: 'link bad', onclick: async () => {
+      if (!(await confirmBox(t('rejectClaim'), t('reject')))) return;
+      const { error } = await sb.from('payment_claims').update({ status: 'rejected', decided_at: new Date().toISOString() }).eq('id', c.id);
+      if (error) return fail(error);
+      after();
+    } }, t('reject'));
+    return h('div', { class: 'item static' }, avatar(name),
+      h('div', { class: 'grow' }, h('strong', null, name),
+        h('small', { class: 'muted' }, [c.method === 'omt' ? 'OMT' : c.method === 'whish' ? 'Whish' : t('other'), c.bills ? monthLabel(c.bills.month) : null, c.refText ? `${t('ref')}: ${c.refText}` : null].filter(Boolean).join(sep()))),
+      h('div', { class: 'end-col' }, h('strong', { class: 'amount' }, money(c.amount)), h('span', { class: 'row' }, no, ok)));
+  }
+
+  function readClaimRow(c, after) {
+    const p = state.people.find((x) => x.id === c.subscriber_id);
+    const name = p ? p.title : '—';
+    const info = h('small', { class: 'muted' }, `${monthLabel(c.month)}${sep()}${Number(c.value)}`);
+    sb.from('readings').select('value').eq('subscriber_id', c.subscriber_id).lt('month', c.month).order('month', { ascending: false }).limit(1).maybeSingle().then(({ data }) => {
+      const prev = data ? Number(data.value) : p ? Number(p.initial_reading) : null;
+      if (prev === null) return;
+      const diff = Number(c.value) - prev;
+      info.textContent = `${monthLabel(c.month)}${sep()}${t('prev')}: ${prev} → ${Number(c.value)} (${diff >= 0 ? '+' : ''}${diff.toFixed(1)} kWh)`;
+      if (diff < 0) info.className = 'bad';
+    });
+    const ok = h('button', { type: 'button', class: 'btn primary small' }, t('approve'));
+    ok.addEventListener('click', async () => {
+      busy(ok, true);
+      try {
+        const biz = state.business.id;
+        let photo = false;
+        if (c.photo) {
+          const src = photoPath(biz, c.subscriber_id, c.month).replace(/\.bin$/, '-sub.bin');
+          const dl = await sb.storage.from('meters').download(src);
+          if (!dl.error) {
+            const up = await sb.storage.from('meters').upload(photoPath(biz, c.subscriber_id, c.month), new Uint8Array(await dl.data.arrayBuffer()), { upsert: true, contentType: 'application/octet-stream' });
+            if (up.error) throw up.error;
+            photo = true;
+          }
+        }
+        const cur = await sb.from('readings').select('id').eq('subscriber_id', c.subscriber_id).eq('month', c.month).maybeSingle();
+        if (cur.error) throw cur.error;
+        const row = Object.assign({ value: Number(c.value) }, photo ? { photo: true } : {});
+        const res = cur.data
+          ? await sb.from('readings').update(row).eq('id', cur.data.id)
+          : await sb.from('readings').insert(Object.assign({ subscriber_id: c.subscriber_id, month: c.month }, row));
+        if (res.error) throw res.error;
+        const { error } = await sb.from('reading_claims').update({ status: 'accepted', decided_at: new Date().toISOString() }).eq('id', c.id);
+        if (error) throw error;
+        toast(t('readingApproved', { name }), 'good');
+        after();
+      } catch (e) { fail(e); busy(ok, false); }
+    });
+    const no = h('button', { type: 'button', class: 'link bad', onclick: async () => {
+      const { error } = await sb.from('reading_claims').update({ status: 'rejected', decided_at: new Date().toISOString() }).eq('id', c.id);
+      if (error) return fail(error);
+      after();
+    } }, t('reject'));
+    const see = c.photo && p && p.sk ? h('button', { type: 'button', class: 'link', onclick: () => showPhoto(p.sk, state.business.id, c.subscriber_id, c.month, name, photoPath(state.business.id, c.subscriber_id, c.month).replace(/\.bin$/, '-sub.bin')) }, icon('camera')) : null;
+    return h('div', { class: 'item static' }, avatar(name),
+      h('div', { class: 'grow' }, h('strong', null, name), info),
+      h('div', { class: 'end-col' }, h('strong', { class: 'amount' }, String(Number(c.value))), h('span', { class: 'row' }, see, no, ok)));
+  }
+
+  function todayCard(x) {
+    const go2 = (label, fn, sub) => ({ label, fn, sub });
+    let a = null;
+    if (x.pending) a = go2(t('todayJoin', { n: x.pending }), () => requestSheet(x.pendingList[0], viewHome));
+    else if (x.payClaims) a = go2(t('todayClaims', { n: x.payClaims }), () => document.getElementById('claims-card')?.scrollIntoView({ behavior: 'smooth' }));
+    else if (x.readClaims) a = go2(t('todayReadClaims', { n: x.readClaims }), () => document.getElementById('rclaims-card')?.scrollIntoView({ behavior: 'smooth' }));
+    else if (!x.tariff) a = go2(t('todayPrices'), x.setPrices);
+    else if (x.missing) a = go2(t('todayReadings', { n: x.missing }), () => go('readings'), x.missingBuilding ? t('todayStartAt', { b: x.missingBuilding }) : null);
+    else if (!x.bills) a = go2(t('todayBills'), x.makeBills);
+    else if (x.unsent) a = go2(t('todaySend', { n: x.unsent }), x.send);
+    else if (x.unpaid) a = go2(t('todayCollect', { n: x.unpaid }), () => go('round'));
+    else if (x.late) a = go2(t('todayLate', { n: x.late }), () => go('late'));
+    if (!a) return h('section', { class: 'today done' }, h('span', { class: 'row-ic' }, icon('check')), h('div', { class: 'grow' }, h('strong', null, t('todayDone')), h('small', { class: 'muted' }, t('todayDoneSub'))));
+    return h('section', { class: 'today' },
+      h('div', { class: 'grow' }, h('small', { class: 'muted' }, t('todayNext')), h('strong', null, a.label), a.sub ? h('small', { class: 'muted' }, a.sub) : null),
+      h('button', { type: 'button', class: 'btn primary small', onclick: a.fn }, t('todayGo')));
+  }
+
+  function usageChart(bills) {
+    const list = bills.slice(0, 12).reverse();
+    if (list.length < 2) return null;
+    const metered = list.some((b) => b.billing_type === 'metered' && b.kwh !== null);
+    const val = (b) => (metered ? Number(b.kwh || 0) : Number(b.amount));
+    const max = Math.max(...list.map(val), 1);
+    const last3 = bills.slice(0, 3).map((b) => Number(b.amount));
+    const est = last3.reduce((a, v) => a + v, 0) / last3.length;
+    const short = (d) => { const [y, mo] = String(d).slice(0, 7).split('-').map(Number); return new Date(y, mo - 1, 1).toLocaleDateString(state.lang === 'ar' ? 'ar-LB' : 'en-GB', { month: 'short' }); };
+    return h('section', { class: 'card stack' },
+      h('div', { class: 'row between' }, h('h3', null, metered ? t('usageKwh') : t('usageAmount')), h('small', { class: 'muted' }, t('lastMonths', { n: list.length }))),
+      h('div', { class: 'bars', role: 'img', 'aria-label': list.map((b) => `${monthLabel(b.month)}: ${val(b)}`).join(', ') },
+        list.map((b, i) => {
+          const bar = h('i');
+          bar.style.height = `${Math.max(4, Math.round((val(b) / max) * 100))}%`;
+          return h('div', { class: `bar-col ${i === list.length - 1 ? 'now' : ''}` }, h('small', null, String(Math.round(val(b)))), h('div', { class: 'bar-track' }, bar), h('small', { class: 'muted' }, short(b.month)));
+        })),
+      h('div', { class: 'row between' }, h('span', null, t('nextEstimate')), h('strong', { class: 'amount' }, `≈ ${money(est)}`)));
+  }
+
+  function claimSheet(s, b, after) {
+    const left = Math.round((Number(b.amount) - Number(b.paid_amount)) * 100) / 100;
+    const amount = input('amount', { type: 'number', step: '0.01', min: '0', inputmode: 'decimal', value: left.toFixed(2) });
+    const save = h('button', { type: 'submit', class: 'btn primary block' }, t('sendToOwner'));
+    const close = sheet(t('iPaid'), h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
+      e.preventDefault();
+      const d = formData(e.target);
+      const a = Math.round(num(amount.value) * 100) / 100;
+      if (!(a > 0) || a > left + 0.001) return toast(t('overpayment'), 'bad');
+      busy(save, true);
+      try {
+        const ref = clean(d.ref, 80);
+        const { error } = await sb.rpc('claim_payment', { p_bill: b.id, p_method: d.method, p_amount: a, p_ref: ref && s.sk ? await V.enc(s.sk, { t: ref }) : null });
+        if (error) throw error;
+        close(); toast(t('claimSent'), 'good'); after();
+      } catch (err) { fail(err); } finally { busy(save, false); }
+    } },
+      h('p', { class: 'muted' }, t('iPaidBody', { biz: s.business.name })),
+      h('small', { class: 'muted' }, monthLabel(b.month)),
+      segmented('method', [['whish', 'Whish'], ['omt', 'OMT'], ['other', t('other')]], 'whish'),
+      field(t('amount'), amount),
+      field(t('ref'), input('ref', { maxlength: 80, placeholder: t('refHint') })),
+      save));
+  }
+
+  function readingSheet(s, after) {
+    const m = monthDate(currentMonth());
+    const value = input('value', { type: 'number', step: '0.01', min: '0', inputmode: 'decimal' });
+    let photoBytes = null;
+    const camBtn = h('button', { type: 'button', class: 'btn ghost block' }, icon('camera'), t('photoTake'));
+    camBtn.addEventListener('click', async () => {
+      const file = await pickPhoto();
+      if (!file) return;
+      busy(camBtn, true);
+      try { photoBytes = await shrinkPhoto(file); camBtn.classList.add('has'); camBtn.lastChild.textContent = t('photoReady'); } catch (e) { fail(e); } finally { busy(camBtn, false); }
+    });
+    const save = h('button', { type: 'submit', class: 'btn primary block' }, t('sendToOwner'));
+    const close = sheet(t('sendReading'), h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
+      e.preventDefault();
+      const v = num(value.value);
+      if (!(v >= 0) || value.value === '') return toast(t('required'), 'bad');
+      busy(save, true);
+      try {
+        if (photoBytes && s.sk) {
+          const enc = await V.encBytes(s.sk, photoBytes);
+          const up = await sb.storage.from('meters').upload(photoPath(s.business_id, s.id, m).replace(/\.bin$/, '-sub.bin'), enc, { upsert: true, contentType: 'application/octet-stream' });
+          if (up.error) throw up.error;
+        }
+        const { error } = await sb.rpc('submit_reading', { p_sub: s.id, p_month: m, p_value: v, p_photo: !!photoBytes });
+        if (error) throw error;
+        close(); toast(t('readingSent'), 'good'); after();
+      } catch (err) {
+        if (/already_read/.test((err && err.message) || '')) toast(t('alreadyRead'), 'warn'); else fail(err);
+      } finally { busy(save, false); }
+    } },
+      h('p', { class: 'muted' }, t('sendReadingBody', { month: monthLabel(m) })),
+      field(t('currentReading'), value),
+      camBtn,
+      save));
+    setTimeout(() => value.focus(), 250);
+  }
+
+  function makePdf(jpeg, w, hgt) {
+    const enc = new TextEncoder();
+    const W = 420; const H = Math.round((hgt / w) * W);
+    const parts = []; const offsets = []; let len = 0;
+    const push = (x) => { const b = typeof x === 'string' ? enc.encode(x) : x; parts.push(b); len += b.length; };
+    const obj = (n, body) => { offsets[n] = len; push(`${n} 0 obj\n${body}\nendobj\n`); };
+    push('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+    obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
+    obj(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+    obj(3, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>`);
+    offsets[4] = len;
+    push(`4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${w} /Height ${hgt} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`);
+    push(jpeg);
+    push('\nendstream\nendobj\n');
+    const content = `q ${W} 0 0 ${H} 0 0 cm /Im0 Do Q`;
+    obj(5, `<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
+    const xref = len;
+    push(`xref\n0 6\n0000000000 65535 f \n${[1, 2, 3, 4, 5].map((n) => `${String(offsets[n]).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+    const out = new Uint8Array(len);
+    let o = 0;
+    for (const p of parts) { out.set(p, o); o += p.length; }
+    return out;
+  }
+
+  async function receiptImage(bizName, title, lines) {
+    try { await document.fonts.load('700 20px "IBM Plex Sans Arabic"'); await document.fonts.load('400 20px "IBM Plex Sans Arabic"'); } catch {}
+    const k = 2; const W = 600; const pad = 36; const rowH = 46;
+    const H = 170 + lines.length * rowH + 90;
+    const c = document.createElement('canvas');
+    c.width = W * k; c.height = H * k;
+    const g = c.getContext('2d');
+    g.scale(k, k);
+    const rtl = state.lang === 'ar';
+    g.direction = rtl ? 'rtl' : 'ltr';
+    const font = (wt, px) => `${wt} ${px}px "IBM Plex Sans Arabic", "Segoe UI", Tahoma, sans-serif`;
+    const start = rtl ? W - pad : pad; const end = rtl ? pad : W - pad;
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H);
+    g.fillStyle = '#121a24'; g.fillRect(0, 0, W, 130);
+    g.fillStyle = '#ffb21a'; g.fillRect(0, 126, W, 4);
+    g.textAlign = rtl ? 'right' : 'left';
+    g.fillStyle = '#f2f5f8'; g.font = font(700, 30); g.fillText(bizName, start, 62);
+    g.fillStyle = '#93a1b2'; g.font = font(400, 18); g.fillText(title, start, 98);
+    let y = 170;
+    for (const [label, value] of lines) {
+      g.textAlign = rtl ? 'right' : 'left'; g.fillStyle = '#5d6877'; g.font = font(400, 18); g.fillText(label, start, y);
+      g.textAlign = rtl ? 'left' : 'right'; g.fillStyle = '#0f1620'; g.font = font(700, 19); g.fillText(String(value), end, y);
+      g.fillStyle = '#dde3ea'; g.fillRect(pad, y + 16, W - pad * 2, 1);
+      y += rowH;
+    }
+    g.textAlign = 'center'; g.fillStyle = '#8a95a3'; g.font = font(400, 15);
+    g.fillText(t('receiptFooter'), W / 2, H - 40);
+    const blob = await new Promise((resolve) => c.toBlob(resolve, 'image/jpeg', 0.9));
+    return { jpeg: new Uint8Array(await blob.arrayBuffer()), w: c.width, h: c.height };
+  }
+
+  function b64(bytes) {
+    let s = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(s);
+  }
+
+  async function shareFile(name, bytes, type) {
+    if (isNative && plugins.Filesystem && plugins.Share) {
+      try {
+        const res = await plugins.Filesystem.writeFile({ path: name, data: b64(bytes), directory: 'CACHE' });
+        await plugins.Share.share({ title: name, url: res.uri });
+      } catch (e) { if (!/cancel/i.test((e && e.message) || '')) fail(e); }
+      return;
+    }
+    const file = new File([bytes], name, { type });
+    if (navigator.canShare && navigator.canShare({ files: [file] }) && window.matchMedia('(pointer: coarse)').matches) {
+      try { await navigator.share({ files: [file] }); } catch {}
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const a = h('a', { href: url, download: name });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
+  async function receiptPdf(bizName, title, lines, no) {
+    const img = await receiptImage(bizName, title, lines);
+    await shareFile(`receipt-${no}.pdf`, makePdf(img.jpeg, img.w, img.h), 'application/pdf');
+  }
+
+  const AR_DIGITS = '٠١٢٣٤٥٦٧٨٩';
+  let digitObs = null;
+  function fixDigits(node) {
+    const p = node.parentElement;
+    if (!p || p.closest('input, textarea, script, style, [data-latin]')) return;
+    if (/[0-9]/.test(node.nodeValue)) node.nodeValue = node.nodeValue.replace(/[0-9]/g, (d) => AR_DIGITS[d]);
+  }
+  function arabizeTree(root) {
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = w.nextNode())) fixDigits(n);
+  }
+  function applyDisplayPrefs() {
+    const root = document.documentElement;
+    root.classList.toggle('big', store.get('big') === '1');
+    const on = state.lang === 'ar' && store.get('arnum') === '1';
+    if (on && !digitObs) {
+      digitObs = new MutationObserver((muts) => {
+        for (const mu of muts) {
+          if (mu.type === 'characterData') fixDigits(mu.target);
+          mu.addedNodes.forEach((n) => { if (n.nodeType === 3) fixDigits(n); else if (n.nodeType === 1) arabizeTree(n); });
+        }
+      });
+      digitObs.observe(document.body, { childList: true, subtree: true, characterData: true });
+      arabizeTree(document.body);
+    } else if (!on && digitObs) {
+      digitObs.disconnect();
+      digitObs = null;
+    }
+  }
+
+  const recentErrors = [];
+  const lastLogged = {};
+  function logContext(where) {
+    return {
+      where: where || null, route: state.route || null, lang: state.lang, online: navigator.onLine, native: isNative,
+      homeScreen: standalone(), screen: `${screen.width}x${screen.height}`, ua: navigator.userAgent.slice(0, 220), path: location.pathname
+    };
+  }
+  function logError(e, where) {
+    try {
+      const msg = String((e && (e.stack || e.message)) || e || '').slice(0, 1500);
+      if (!msg || /failed to fetch|networkerror|load failed|aborterror|the operation was aborted/i.test(msg)) return;
+      recentErrors.unshift(`${new Date().toISOString().slice(11, 19)} ${msg.split('\n')[0].slice(0, 200)}`);
+      recentErrors.length = Math.min(recentErrors.length, 5);
+      const key = msg.slice(0, 200);
+      if (lastLogged[key] && Date.now() - lastLogged[key] < 60000) return;
+      lastLogged[key] = Date.now();
+      sb.rpc('log_event', {
+        p_level: 'error', p_message: msg, p_context: logContext(where), p_mode: state.mode || (state.user ? 'none' : 'guest'),
+        p_version: cfg.version, p_business: state.business ? state.business.id : null
+      }).then(() => {}, () => {});
+    } catch {}
+  }
+
+  function reportSheet() {
+    const text = h('textarea', { name: 'msg', rows: 5, maxlength: 1500, placeholder: t('reportHint') });
+    const save = h('button', { type: 'submit', class: 'btn primary block' }, t('reportSend'));
+    const close = sheet(t('reportProblem'), h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
+      e.preventDefault();
+      const d = formData(e.target);
+      const msg = clean(d.msg, 1500);
+      if (msg.length < 3) return toast(t('required'), 'bad');
+      busy(save, true);
+      try {
+        const ctx = d.details ? Object.assign(logContext('report'), { errors: recentErrors.slice() }) : null;
+        const { error } = await sb.rpc('log_event', {
+          p_level: 'report', p_message: msg, p_context: ctx, p_mode: state.mode || 'guest',
+          p_version: cfg.version, p_business: state.business ? state.business.id : null
+        });
+        if (error) throw error;
+        close(); toast(t('reportSent'), 'good');
+      } catch (err) { fail(err); } finally { busy(save, false); }
+    } },
+      h('p', { class: 'muted' }, t('reportBody')),
+      field(t('message'), text),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'details', checked: true }), h('span', null, t('reportDetails'))),
+      save));
+    setTimeout(() => text.focus(), 250);
+  }
+
+  async function viewLogs(level) {
+    if (!state.isAdmin) { state.route = defaultRoute(); return route(); }
+    level = level || 'all';
+    let q = sb.from('app_logs').select('*').order('created_at', { ascending: false }).limit(200);
+    if (level !== 'all') q = q.eq('level', level);
+    const { data, error } = await q;
+    if (error) throw error;
+    const again = () => viewLogs(level).catch(fail);
+    const when = (d) => new Date(d).toLocaleString(state.lang === 'ar' ? 'ar-LB' : 'en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    render(head(t('appLogs'), h('button', { type: 'button', class: 'icon-btn', onclick: again, 'aria-label': t('refresh') }, '↻'), 'more'),
+      h('p', { class: 'muted' }, t('appLogsBody')),
+      h('div', { class: 'chips' }, ['all', 'report', 'error'].map((f) => h('button', { type: 'button', class: f === level ? 'chip on' : 'chip', onclick: () => viewLogs(f).catch(fail) }, t(`log_${f}`)))),
+      data.length ? h('div', { class: 'card flush' }, data.map((x) => h('details', { class: 'item col log-item' },
+        h('summary', { class: 'row between' },
+          h('span', { class: 'grow log-line' }, h('span', { class: `pill ${x.level === 'report' ? 'partial' : 'unpaid'}` }, t(`log_${x.level}`)), ' ', x.message.split('\n')[0].slice(0, 140)),
+          h('small', { class: 'muted' }, when(x.created_at))),
+        h('div', { class: 'stack tight detail' },
+          h('small', { class: 'muted' }, [x.mode, x.anon ? t('linkUser') : null, x.version && `v${x.version}`, x.user_id && `#${String(x.user_id).slice(0, 8)}`].filter(Boolean).join(sep())),
+          h('pre', { class: 'log-pre', 'data-latin': '' }, x.message),
+          x.context ? h('pre', { class: 'log-pre', 'data-latin': '' }, JSON.stringify(x.context, null, 2)) : null,
+          h('button', { type: 'button', class: 'link bad', onclick: async () => {
+            const res = await sb.from('app_logs').delete().eq('id', x.id);
+            if (res.error) return fail(res.error);
+            again();
+          } }, t('delete'))))))
+        : empty(t('noLogs')));
+  }
+
   function menuRow(label, value, onclick, ic) {
     return h(onclick ? 'button' : 'div', { class: 'item', type: onclick ? 'button' : null, onclick },
       h('span', { class: 'row-ic' }, icon(ic)),
@@ -2532,6 +3404,8 @@
       parts.push(h('section', { class: 'card flush' },
         menuRow(t('collectors'), t('collectorsShort'), () => go('collectors'), 'people'),
         menuRow(t('reports'), t('reportsShort'), () => go('reports'), 'bills'),
+        menuRow(t('costsTitle'), t('costsShort'), () => go('costs'), 'tag'),
+        menuRow(t('lateTitle'), t('lateMenuShort'), () => go('late'), 'bell'),
         menuRow(t('inviteAll'), t('inviteAllShort'), () => go('invite'), 'send'),
         menuRow(t('importTitle'), t('importShort'), importSheet, 'people'),
         menuRow(t('tabNotices'), t('noticesShort'), () => go('notices'), 'bell'),
@@ -2545,6 +3419,7 @@
     } else if (state.mode === 'collector') {
       parts.push(h('section', { class: 'card flush' },
         menuRow(state.business.name, state.role.name, null, 'bolt'),
+        menuRow(t('round'), t('roundShort'), () => go('round'), 'people'),
         state.subs.length ? menuRow(t('switchToSubscriber'), null, () => { state.mode = 'subscriber'; go('mybills'); }, 'home') : null));
     } else {
       parts.push(h('section', { class: 'card flush' },
@@ -2556,6 +3431,12 @@
     parts.push(h('section', { class: 'card flush' },
       pushStatus() !== 'none' ? menuRow(t('notifications'), pushLabel(), () => togglePush(viewMore), 'bell') : null,
       menuRow(t('language'), state.lang === 'ar' ? 'العربية' : 'English', switchLang, 'globe'),
+      menuRow(t('textSize'), store.get('big') === '1' ? t('textLarge') : t('textNormal'), () => { if (store.get('big') === '1') store.del('big'); else store.set('big', '1'); applyDisplayPrefs(); viewMore(); }, 'text'),
+      state.lang === 'ar' ? menuRow(t('numbers'), store.get('arnum') === '1' ? '١٢٣' : '123', () => {
+        if (store.get('arnum') === '1') { store.del('arnum'); applyDisplayPrefs(); route(); } else { store.set('arnum', '1'); applyDisplayPrefs(); viewMore(); }
+      }, 'hash') : null,
+      menuRow(t('reportProblem'), t('reportShort'), reportSheet, 'chat'),
+      state.isAdmin ? menuRow(t('appLogs'), t('appLogsShort'), () => go('logs'), 'bills') : null,
       menuRow(t('security'), t('securityShort'), null, 'lock')));
     parts.push(h('button', { type: 'button', class: 'btn danger ghost block', onclick: async () => {
       if (state.user.is_anonymous && !(await confirmBox(t('leaveConfirm'), t('signOut')))) return;
@@ -2668,6 +3549,8 @@
     root.classList.add('ios-app');
   }
   fixViewport();
+  window.addEventListener('error', (ev) => logError(ev.error || ev.message, 'window'));
+  window.addEventListener('unhandledrejection', (ev) => logError(ev.reason, 'promise'));
   window.addEventListener('orientationchange', () => setTimeout(fixViewport, 300));
   window.addEventListener('resize', fixViewport);
   setTimeout(() => document.body.classList.remove('boot'), 10000);
