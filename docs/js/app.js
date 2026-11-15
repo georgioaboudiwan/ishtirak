@@ -216,13 +216,20 @@
   function appUrl() { return isNative || !/^https?:$/.test(location.protocol) ? cfg.publicUrl : `${location.origin}${location.pathname}`; }
 
   const memo = new Map();
+  const homeFresh = {};
   async function cached(key, fn, ttl) {
     const hit = memo.get(key);
     if (hit && hit.ver === dataVer && Date.now() - hit.at < (ttl || 30000)) return hit.val;
     const entry = { ver: dataVer, at: Date.now(), val: fn() };
     memo.set(key, entry);
-    try { return await entry.val; } catch (e) { if (memo.get(key) === entry) memo.delete(key); throw e; }
+    try {
+      const v = await entry.val;
+      entry.done = true; entry.res = v;
+      return v;
+    } catch (e) { if (memo.get(key) === entry) memo.delete(key); throw e; }
   }
+  function peek(key) { const hit = memo.get(key); return hit && hit.done && hit.ver === dataVer ? hit : null; }
+  function seed(key, val, at) { memo.set(key, { ver: dataVer, at, val: Promise.resolve(val), done: true, res: val }); }
   function inviteUrl(p) { return `${appUrl()}#/i/${p.invite_code}.${p.sk}`; }
   function joinUrl() { return `${appUrl()}#/b/${state.business.join_code}`; }
 
@@ -547,6 +554,7 @@
   }
 
   function applyMode() {
+    if (state.mode) store.set('lastMode', state.mode);
     if (state.mode === 'collector' && state.roles.length) {
       state.role = state.roles[0];
       state.business = state.role.business;
@@ -980,15 +988,16 @@
       : await sb.from('subscribers').select('*').eq('business_id', state.business.id).order('created_at');
     if (res.error) throw res.error;
     const data = res.data || [];
-    for (const p of data) {
+    await Promise.all(data.map(async (p) => {
       if (p.status === 'pending') {
         const o = await V.open(state.priv, p.jk);
         p.sk = o && o.k;
       } else p.sk = ((await V.dec(state.bk, p.wk)) || {}).k;
-      p.info = (await V.dec(p.sk, p.enc)) || {};
-      p.label = ((await V.dec(state.bk, p.oenc)) || {}).label || '';
+      const [info, lab] = await Promise.all([V.dec(p.sk, p.enc), V.dec(state.bk, p.oenc)]);
+      p.info = info || {};
+      p.label = (lab || {}).label || '';
       p.title = p.label || p.info.name || '—';
-    }
+    }));
     data.sort((a, b) => a.title.localeCompare(b.title));
     return data;
   }
@@ -1246,25 +1255,84 @@
     draw();
   }
 
-  async function viewHome() {
+  function homeKeys(biz, m) { return [`people:owner:${biz.id}`, `home:${m}:${biz.id}`, `open:${biz.id}`, `collectors:${biz.id}`]; }
+
+  function homeData(biz, m, ttl) {
+    return cached(`home:${m}:${biz.id}`, async () => {
+      const [tariff, readings, bills, pc, rc] = await Promise.all([
+        sb.from('tariffs').select('*').eq('business_id', biz.id).eq('month', m).maybeSingle(),
+        sb.from('readings').select('subscriber_id, subscribers!inner(business_id)').eq('month', m).eq('subscribers.business_id', biz.id),
+        sb.from('bills').select(`*, payments(${PAY})`).eq('business_id', biz.id).eq('month', m),
+        sb.from('payment_claims').select(`*, bills(*, payments(${PAY}))`).eq('business_id', biz.id).eq('status', 'pending').order('created_at'),
+        sb.from('reading_claims').select('*').eq('business_id', biz.id).eq('status', 'pending').order('created_at')
+      ]);
+      for (const r of [tariff, readings, bills, pc, rc]) if (r.error) throw r.error;
+      return { tariff: tariff.data, readings: readings.data, bills: bills.data, payClaims: pc.data, readClaims: rc.data };
+    }, ttl || 120000);
+  }
+
+  async function fetchHome(biz, m) {
+    await syncDrafts();
+    const [people, hd] = await Promise.all([loadPeople(), homeData(biz, m), loadOpenBills(), loadCollectors()]);
+    homeFresh[`${biz.id}:${m}`] = Date.now();
+    saveSnapshot(biz, m);
+    return [people, hd];
+  }
+
+  async function refreshHome(biz, m) {
+    for (const k of [...memo.keys()]) if (k.endsWith(`:${biz.id}`)) memo.delete(k);
+    try { await fetchHome(biz, m); } catch (e) { if (!isNetErr(e)) logError(e, 'refreshHome'); return; }
+    const typing = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+    if (state.route === 'home' && state.business && state.business.id === biz.id && monthDate(state.month) === m && !document.querySelector('.sheet-wrap') && !typing) viewHome(true).catch(fail);
+  }
+
+  async function saveSnapshot(biz, m) {
+    try {
+      if (!state.bk || state.mode !== 'owner') return;
+      const [pk, hk, ok, ck] = homeKeys(biz, m).map(peek);
+      if (!pk || !hk || !ok || !ck) return;
+      store.set(`snap:${biz.id}`, await V.enc(state.bk, { m, at: Date.now(), people: pk.res, home: hk.res, open: ok.res, collectors: ck.res }));
+    } catch {}
+  }
+
+  async function loadSnapshot(biz) {
+    try {
+      const snap = await V.dec(state.bk, store.get(`snap:${biz.id}`));
+      if (!snap || snap.m !== monthDate(state.month) || Date.now() - snap.at > 7 * 86400000) return false;
+      const keys = homeKeys(biz, snap.m);
+      [snap.people, snap.home, snap.open, snap.collectors].forEach((v, i) => seed(keys[i], v, snap.at));
+      return true;
+    } catch { return false; }
+  }
+
+  async function viewHome(fresh) {
     const biz = state.business;
     const m = monthDate(state.month);
-    await syncDrafts();
-    for (const k of [...memo.keys()]) if (k.endsWith(`:${biz.id}`)) memo.delete(k);
-    const [people, tariff, readings, bills] = await Promise.all([
-      loadPeople(),
-      sb.from('tariffs').select('*').eq('business_id', biz.id).eq('month', m).maybeSingle(),
-      sb.from('readings').select('subscriber_id, subscribers!inner(business_id)').eq('month', m).eq('subscribers.business_id', biz.id),
-      sb.from('bills').select(`*, payments(${PAY})`).eq('business_id', biz.id).eq('month', m),
-      loadOpenBills(),
-      loadCollectors()
-    ]);
-    await loadClaims();
+    const hits = homeKeys(biz, m).map(peek);
+    let people; let hd;
+    if (fresh !== true && hits.every(Boolean)) {
+      people = state.people = hits[0].res;
+      hd = hits[1].res;
+      state.openBills = hits[2].res;
+      state.collectors = hits[3].res;
+      state.sent = sentMap();
+      if (Date.now() - (homeFresh[`${biz.id}:${m}`] || 0) > 8000) { homeFresh[`${biz.id}:${m}`] = Date.now(); setTimeout(() => refreshHome(biz, m), 0); }
+    } else if (fresh === true) {
+      [people, hd] = await Promise.all([loadPeople(), homeData(biz, m), loadOpenBills(), loadCollectors()]);
+    } else {
+      [people, hd] = await fetchHome(biz, m);
+    }
+    for (const c of hd.payClaims) {
+      const p = people.find((x) => x.id === c.subscriber_id);
+      c.refText = c.ref && p && p.sk ? ((await V.dec(p.sk, c.ref)) || {}).t || '' : '';
+    }
+    state.payClaims = hd.payClaims;
+    state.readClaims = hd.readClaims;
+    const tariff = { data: hd.tariff }; const readings = { data: hd.readings }; const bills = { data: hd.bills };
     const oldBills = state.openBills.filter((b) => b.month < m).sort((a, b) => owed(b) - owed(a));
     const oldTotal = oldBills.reduce((a, b) => a + owed(b), 0);
     const oldSubs = new Set(oldBills.map((b) => b.subscriber_id)).size;
     const waiting = draftCount();
-    for (const r of [tariff, readings, bills]) if (r.error) throw r.error;
     const billable = people.filter((p) => p.active && p.status !== 'pending');
     const metered = billable.filter((p) => p.billing_type === 'metered');
     const pending = people.filter((p) => p.status === 'pending');
@@ -1823,14 +1891,8 @@
     const q = (query || '').toLowerCase();
     const biz = state.business;
     const m = monthDate(state.month);
-    const [, res] = await Promise.all([
-      loadPeople(),
-      sb.from('bills').select(`*, payments(${PAY})`).eq('business_id', biz.id).eq('month', m),
-      loadOpenBills(),
-      loadCollectors()
-    ]);
-    if (res.error) throw res.error;
-    const data = res.data;
+    const [, hd] = await Promise.all([loadPeople(), homeData(biz, m, 20000), loadOpenBills(), loadCollectors()]);
+    const data = hd.bills;
     const oldBills = state.openBills.filter((b) => b.month < m);
     const again = () => viewBills(status, query).catch(fail);
     const order = { unpaid: 0, partial: 1, paid: 2 };
@@ -3012,22 +3074,6 @@
             : empty(t('noCosts')))));
   }
 
-  async function loadClaims() {
-    const biz = state.business;
-    const [pc, rc] = await Promise.all([
-      sb.from('payment_claims').select(`*, bills(*, payments(${PAY}))`).eq('business_id', biz.id).eq('status', 'pending').order('created_at'),
-      sb.from('reading_claims').select('*').eq('business_id', biz.id).eq('status', 'pending').order('created_at')
-    ]);
-    if (pc.error) throw pc.error;
-    if (rc.error) throw rc.error;
-    for (const c of pc.data) {
-      const p = state.people.find((x) => x.id === c.subscriber_id);
-      c.refText = c.ref && p && p.sk ? ((await V.dec(p.sk, c.ref)) || {}).t || '' : '';
-    }
-    state.payClaims = pc.data;
-    state.readClaims = rc.data;
-  }
-
   function payClaimRow(c, after) {
     const p = state.people.find((x) => x.id === c.subscriber_id);
     const name = p ? p.title : '—';
@@ -3481,7 +3527,9 @@
   }
 
   async function signOut() {
-    if (state.ownBusiness) store.del(`bk:${state.ownBusiness.id}`);
+    if (state.ownBusiness) { store.del(`bk:${state.ownBusiness.id}`); store.del(`snap:${state.ownBusiness.id}`); }
+    memo.clear();
+    store.del('lastMode');
     await sb.auth.signOut();
     Object.assign(state, {
       user: null, pw: null, business: null, ownBusiness: null, bk: null, priv: null, subs: [], roles: [], role: null, mode: null,
@@ -3491,11 +3539,27 @@
     route();
   }
 
+  async function fastStart() {
+    try {
+      if (state.mode || state.user.is_anonymous || state.invite || state.join || state.cinvite || state.route !== 'home') return;
+      if (store.get('lastMode') !== 'owner') return;
+      const ctx = JSON.parse(store.get(`ctx:${state.user.id}`) || 'null');
+      const bk = ctx && store.get(`bk:${ctx.id}`);
+      const row = ctx && JSON.parse(store.get(`bkr:${ctx.id}`) || 'null');
+      if (!bk || !row) return;
+      state.ownBusiness = ctx; state.business = ctx; state.mode = 'owner';
+      if (!(await adoptKey(row, bk)) || !(await loadSnapshot(ctx))) { state.mode = null; state.bk = null; state.ownBusiness = null; state.business = null; return; }
+      if (navigator.onLine) verifyKeys(ctx, bk);
+      await route();
+    } catch (e) { console.error(e); }
+  }
+
   async function boot(force) {
     if (holdBoot && !force) return;
     const { data } = await sb.auth.getSession();
     state.user = data.session ? data.session.user : null;
     if (!state.user && !navigator.onLine) state.user = storedUser();
+    if (state.user) await fastStart();
     try {
       if (!state.user && (state.invite || state.join || state.cinvite)) await ensureSession();
       else if (state.user) await loadContext();
