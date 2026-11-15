@@ -6,7 +6,7 @@
   const isNative = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
   const plugins = (window.Capacitor && window.Capacitor.Plugins) || {};
   let dataVer = 0;
-  const READ_RPC = /\/rpc\/(my_subscriptions|my_collector_roles|collector_subscribers|join_preview|am_i_admin|log_event|owner_home|app_context)$/;
+  const READ_RPC = /\/rpc\/(my_subscriptions|my_collector_roles|collector_subscribers|join_preview|am_i_admin|log_event|owner_home|app_context|my_home|collector_home)$/;
   const trackedFetch = (input, init) => {
     const method = ((init && init.method) || (input && input.method) || 'GET').toUpperCase();
     const url = String(typeof input === 'string' ? input : input.url).split('?')[0];
@@ -208,12 +208,22 @@
 
   function smsLink(phone, text) { return `sms:+${intlPhone(phone)}?&body=${encodeURIComponent(text)}`; }
   function openExternal(url) {
-    if (isNative) {
+    if (isNative || url.startsWith('sms:')) {
       const a = h('a', { href: url, rel: 'noopener' });
       document.body.append(a); a.click(); a.remove();
       return;
     }
     window.open(url, '_blank', 'noopener,noreferrer');
+  }
+  function sendTo(p, text, viaSms) {
+    openExternal(viaSms ? smsLink(p.info.phone, text) : waLink(p.info.phone, text));
+  }
+  function sendButtons(p, text, done) {
+    const sms = !!p.sms;
+    return [
+      h('button', { type: 'button', class: `btn ${sms ? 'sms' : 'wa'} block`, onclick: () => { sendTo(p, text, sms); if (done) done(); } }, icon(sms ? 'send' : 'chat'), sms ? t('openSms') : t('openWhatsApp')),
+      h('button', { type: 'button', class: 'link small center-link', onclick: () => { sendTo(p, text, !sms); if (done) done(); } }, sms ? t('useWhatsApp') : t('useSms'))
+    ];
   }
   function appUrl() { return isNative || !/^https?:$/.test(location.protocol) ? cfg.publicUrl : `${location.origin}${location.pathname}`; }
 
@@ -976,7 +986,22 @@
       h('button', { type: 'button', class: 'link', onclick: signOut }, t('signOut')));
   }
 
+  function collectorData() {
+    const biz = state.business;
+    return cached(`chome:${biz.id}`, async () => {
+      const { data, error } = await sb.rpc('collector_home', { p_business: biz.id });
+      if (error) throw error;
+      const people = await decryptPeople(data.people || []);
+      people.sort((a, b) => a.title.localeCompare(b.title));
+      const at = Date.now();
+      seed(`people:collector:${biz.id}`, people, at);
+      seed(`open:${biz.id}`, data.open || [], at);
+      return true;
+    });
+  }
+
   async function loadPeople() {
+    if (state.mode === 'collector') await collectorData();
     state.people = await cached(`people:${state.mode}:${state.business.id}`, fetchPeople);
     return state.people;
   }
@@ -998,6 +1023,7 @@
       const [info, lab] = await Promise.all([V.dec(p.sk, p.enc), V.dec(state.bk, p.oenc)]);
       p.info = info || {};
       p.label = (lab || {}).label || '';
+      p.sms = !!(lab || {}).sms;
       p.title = p.label || p.info.name || '—';
     }));
     data.sort((a, b) => a.title.localeCompare(b.title));
@@ -1005,6 +1031,7 @@
   }
 
   async function loadOpenBills() {
+    if (state.mode === 'collector') await collectorData();
     state.openBills = await cached(`open:${state.business.id}`, async () => {
       const { data, error } = await sb.from('bills').select(`*, payments(${PAY})`).eq('business_id', state.business.id).neq('status', 'paid');
       if (error) throw error;
@@ -1196,7 +1223,7 @@
       pays.length ? h('div', { class: 'stack tight' }, h('small', { class: 'muted' }, t('payments')), pays) : null,
       form,
       photoSlot,
-      p && p.info.phone ? h('button', { type: 'button', class: 'btn wa block', onclick: () => { openExternal(waLink(p.info.phone, billMessage(b, p))); markSent(b.id); } }, icon('chat'), t('sendBill')) : null));
+      p && p.info.phone ? sendButtons(p, billMessage(b, p), () => markSent(b.id)) : null));
     if (b.billing_type === 'metered' && p && p.sk && state.mode === 'owner') {
       sb.from('readings').select('photo').eq('subscriber_id', b.subscriber_id).eq('month', b.month).maybeSingle().then(({ data }) => {
         if (data && data.photo) photoSlot.replaceChildren(h('button', { type: 'button', class: 'btn ghost block', onclick: () => showPhoto(p.sk, biz.id, p.id, b.month, p.title) }, icon('camera'), t('meterPhoto')));
@@ -1224,7 +1251,7 @@
         h('strong', { class: 'receipt-biz' }, biz.name), h('small', { class: 'muted' }, title),
         lines.map(([k, v]) => h('div', { class: 'row between' }, h('span', { class: 'muted' }, k), h('strong', null, v)))),
       h('div', { class: 'actions three' },
-        p && p.info.phone ? h('button', { type: 'button', class: 'act wa', onclick: () => openExternal(waLink(p.info.phone, text)) }, icon('chat'), h('span', null, 'WhatsApp')) : null,
+        p && p.info.phone ? h('button', { type: 'button', class: `act ${p.sms ? '' : 'wa'}`, onclick: () => sendTo(p, text, !!p.sms) }, icon(p.sms ? 'send' : 'chat'), h('span', null, p.sms ? 'SMS' : 'WhatsApp')) : null,
         h('button', { type: 'button', class: 'act', onclick: (e) => { const btn = e.currentTarget; busy(btn, true); receiptPdf(biz.name, title, lines, receiptNo(pay)).catch(fail).finally(() => busy(btn, false)); } }, icon('bills'), h('span', null, 'PDF')),
         h('button', { type: 'button', class: 'act', onclick: () => shareText(text) }, icon('send'), h('span', null, t('share'))))));
   }
@@ -1252,10 +1279,7 @@
         h('div', { class: 'summary' }, h('strong', null, p.title),
           h('span', null, `${monthLabel(b.month)}${sep()}`, ltr(money(owed(b) + debtBefore(b.subscriber_id, b.month)))),
           h('span', { class: 'muted' }, ltr(p.info.phone))),
-        h('button', { type: 'button', class: 'btn wa block', onclick: () => {
-          openExternal(waLink(p.info.phone, billMessage(b, p)));
-          markSent(b.id); i++; draw();
-        } }, icon('chat'), t('openWhatsApp')),
+        ...sendButtons(p, billMessage(b, p), () => { markSent(b.id); i++; draw(); }),
         h('button', { type: 'button', class: 'btn ghost block', onclick: () => { i++; draw(); } }, t('skip')));
     };
     draw();
@@ -1448,8 +1472,10 @@
         const last = await sb.from('tariffs').select('*').eq('business_id', biz.id).lt('month', m).order('month', { ascending: false }).limit(1).maybeSingle();
         seed = last.data;
       }
-      const offRes = await sb.from('official_prices').select('band, kwh_lbp, source').eq('month', m);
-      const offMap = new Map((offRes.data || []).map((o) => [o.band, o]));
+      const offRes = await sb.from('official_prices').select('month, band, kwh_lbp, source').lte('month', m).order('month', { ascending: false }).limit(6);
+      const offRows = offRes.data || [];
+      const offMap = new Map(offRows.filter((o) => o.month === m).map((o) => [o.band, o]));
+      const latestOf = (bd) => offRows.find((o) => o.band === bd && o.month < m);
       const rate = Number(biz.lbp_rate) || 0;
       const band = segmented('band', [['low', t('bandLow')], ['high', t('bandHigh')]], biz.band || 'low');
       const officialVal = current && current.official_kwh_lbp ? current.official_kwh_lbp : offMap.has(biz.band || 'low') ? offMap.get(biz.band || 'low').kwh_lbp : '';
@@ -1464,10 +1490,18 @@
         offNote.textContent = `${t('officialUsd', { usd: `$${usd.toFixed(3)}`, rate: rate.toLocaleString('en-US') })}${above ? `${sep()}${t('aboveOfficialBy', { pct: Math.round((k / usd - 1) * 100) })}` : ''}`;
         offNote.className = above ? 'bad' : 'ok';
       };
+      const lastSlot = h('div', { class: 'official-last' });
+      const showLast = () => {
+        const v = band.querySelector('input:checked').value;
+        const last = !offMap.has(v) && latestOf(v);
+        lastSlot.replaceChildren(...(last ? [h('small', { class: 'muted' }, t('officialNotYet')), h('button', { type: 'button', class: 'chip', onclick: () => { official.value = Math.round(last.kwh_lbp); check(); } }, t('officialUseLast', { month: monthLabel(last.month), v: Math.round(last.kwh_lbp).toLocaleString('en-US') }))] : []));
+      };
       band.addEventListener('change', () => {
         const v = band.querySelector('input:checked').value;
         if (offMap.has(v)) { official.value = offMap.get(v).kwh_lbp; check(); }
+        showLast();
       });
+      showLast();
       official.addEventListener('input', check);
       kwhInput.addEventListener('input', check);
       check();
@@ -1494,6 +1528,7 @@
         h('h4', null, t('officialTitle')),
         field(t('area'), band),
         field(t('officialKwh'), official),
+        lastSlot,
         offNote,
         h('h4', null, t('meteredSubs')),
         h('div', { class: 'grid2' },
@@ -1519,8 +1554,14 @@
       field(t('amps'), amps),
       h('div', { class: 'chips' }, [5, 10, 15, 20, 30].map((a) => h('button', { type: 'button', class: 'chip', onclick: () => { amps.value = a; } }, `${a}A`))),
       field(t('billingType'), type),
-      meterRow
+      meterRow,
+      h('label', { class: 'check' }, input('sms', { type: 'checkbox', checked: !!base.sms }), h('span', null, t('smsPref')))
     ];
+  }
+
+  async function ownerNote(s) {
+    if (!s.label && !s.sms) return null;
+    return V.enc(state.bk, s.sms ? { label: s.label || '', sms: true } : { label: s.label });
   }
 
   function readSubscription(d) {
@@ -1528,7 +1569,7 @@
     const metered = d.billing_type !== 'flat';
     const init = metered ? num(d.initial_reading || 0) : 0;
     if (!(a >= 1 && a <= 200) || !(init >= 0)) { toast(t('required'), 'bad'); return null; }
-    return { amps: a, metered, init, meter: metered ? clean(d.meter, 40) : '', label: clean(d.label, 80) };
+    return { amps: a, metered, init, meter: metered ? clean(d.meter, 40) : '', label: clean(d.label, 80), sms: !!d.sms };
   }
 
   function requestSheet(p, after) {
@@ -1546,7 +1587,7 @@
       busy(ok, true);
       try {
         const up = await sb.rpc('approve_request', {
-          p_sub: p.id, p_wk: await V.enc(state.bk, { k: p.sk }), p_oenc: s.label ? await V.enc(state.bk, { label: s.label }) : null,
+          p_sub: p.id, p_wk: await V.enc(state.bk, { k: p.sk }), p_oenc: await ownerNote(s),
           p_amps: s.amps, p_type: s.metered ? 'metered' : 'flat', p_initial: s.init
         });
         if (up.error) throw up.error;
@@ -1663,7 +1704,7 @@
       try {
         const sk = isNew ? V.genKey() : p.sk;
         const row = {
-          enc: await V.enc(sk, next), oenc: s.label ? await V.enc(state.bk, { label: s.label }) : null,
+          enc: await V.enc(sk, next), oenc: await ownerNote(s),
           amps: s.amps, billing_type: s.metered ? 'metered' : 'flat', initial_reading: s.init, active: isNew ? true : !!d.active
         };
         if (isNew) {
@@ -2210,13 +2251,14 @@
     const active = state.subs.filter((s) => s.status === 'active');
     const waiting = state.subs.filter((s) => s.status === 'pending');
     const ids = active.map((s) => s.id);
-    const [res, ph, pc, rc] = ids.length ? await Promise.all([
-      sb.from('bills').select('*, payments(amount, method, paid_at, lbp_amount)').in('subscriber_id', ids).order('month', { ascending: false }).limit(60),
-      sb.from('readings').select('subscriber_id, month').in('subscriber_id', ids).eq('photo', true).order('month', { ascending: false }).limit(60),
-      sb.from('payment_claims').select('bill_id, amount, method, status, created_at').in('subscriber_id', ids).eq('status', 'pending'),
-      sb.from('reading_claims').select('subscriber_id, month, value, status').in('subscriber_id', ids).eq('month', monthDate(currentMonth()))
-    ]) : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }];
-    if (res.error) throw res.error;
+    let mh = { bills: [], photos: [], pay_claims: [], read_claims: [] };
+    if (ids.length) {
+      const { data, error } = await sb.rpc('my_home');
+      if (error) throw error;
+      mh = data;
+    }
+    const res = { data: mh.bills || [] }; const ph = { data: mh.photos || [] };
+    const pc = { data: mh.pay_claims || [] }; const rc = { data: mh.read_claims || [] };
     const photos = new Set((ph.data || []).map((r) => `${r.subscriber_id}:${r.month}`));
     const claimOf = new Map((pc.data || []).map((c) => [c.bill_id, c]));
     const readOf = new Map((rc.data || []).map((c) => [c.subscriber_id, c]));
@@ -2643,7 +2685,7 @@
         keys.push(sk);
         rows.push({
           business_id: state.business.id, enc: await V.enc(sk, x.info), wk: await V.enc(state.bk, { k: sk }),
-          oenc: x.label ? await V.enc(state.bk, { label: x.label }) : null,
+          oenc: await ownerNote(x),
           amps: x.amps, billing_type: x.billing_type, initial_reading: x.initial_reading, active: true
         });
       }
@@ -2744,7 +2786,7 @@
       body.replaceChildren(
         h('small', { class: 'muted' }, t('sendProgress', { i: i + 1, n: people.length })), bar,
         h('div', { class: 'summary' }, h('strong', null, p.title), h('span', { class: 'muted' }, ltr(p.info.phone))),
-        h('button', { type: 'button', class: 'btn wa block', onclick: () => { openExternal(waLink(p.info.phone, msg)); i++; draw(); } }, icon('chat'), t('openWhatsApp')),
+        ...sendButtons(p, msg, () => { i++; draw(); }),
         h('button', { type: 'button', class: 'btn ghost block', onclick: () => { i++; draw(); } }, t('skip')),
         h('button', { type: 'button', class: 'link', onclick: () => close() }, t('later')));
     };
@@ -2934,7 +2976,7 @@
             x.p.cut_at ? h('span', { class: 'pill bad' }, `${t('cutState')}${sep()}${dateLabel(x.p.cut_at)}`) : null),
           h('div', { class: 'end-col' }, h('strong', { class: 'amount' }, money(x.due)),
             h('span', { class: 'row' },
-              x.p.info.phone && x.due > 0 ? h('button', { type: 'button', class: 'link', onclick: () => openExternal(waLink(x.p.info.phone, lateMsg(x))) }, 'WhatsApp') : null,
+              x.p.info.phone && x.due > 0 ? h('button', { type: 'button', class: 'link', onclick: () => sendTo(x.p, lateMsg(x), !!x.p.sms) }, x.p.sms ? 'SMS' : 'WhatsApp') : null,
               x.p.cut_at
                 ? h('button', { type: 'button', class: 'link ok', onclick: () => reconnectSheet(x, again) }, t('reconnect'))
                 : h('button', { type: 'button', class: 'link bad', onclick: async () => {
@@ -2992,7 +3034,7 @@
       body.replaceChildren(
         h('small', { class: 'muted' }, t('sendProgress', { i: i + 1, n: items.length })), bar,
         h('div', { class: 'summary' }, h('strong', null, x.p.title), x.sub ? h('span', null, x.sub) : null, h('span', { class: 'muted' }, ltr(x.p.info.phone))),
-        h('button', { type: 'button', class: 'btn wa block', onclick: () => { openExternal(waLink(x.p.info.phone, x.text)); i++; draw(); } }, icon('chat'), t('openWhatsApp')),
+        ...sendButtons(x.p, x.text, () => { i++; draw(); }),
         h('button', { type: 'button', class: 'btn ghost block', onclick: () => { i++; draw(); } }, t('skip')));
     };
     draw();

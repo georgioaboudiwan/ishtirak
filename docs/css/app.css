@@ -515,3 +515,6 @@ html.big #dock .tab span { font-size: 13px; }
 .log-line { display: block; }
 .log-line .pill { display: inline-block; margin-inline-end: 6px; vertical-align: middle; }
 .view.still { animation: none; }
+.btn.sms { background: var(--ink); color: var(--bg); }
+.center-link { align-self: center; display: block; margin: -4px auto 0; }
+.official-last { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; } .official-last:empty { display: none; }
