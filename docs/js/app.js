@@ -135,6 +135,7 @@
     document.body.classList.remove('boot');
     $app.replaceChildren(h('div', { class: 'view' }, list.filter((n) => !fabs.includes(n))));
     $fab.replaceChildren(...fabs);
+    $app.dataset.route = state.route || '';
     $app.scrollTop = 0;
     window.scrollTo(0, 0);
   }
@@ -476,12 +477,22 @@
       if (!views[state.route]) state.route = defaultRoute();
       drawNav();
       if (!navigator.onLine && state.route !== 'readings') return viewOffline();
-      if (!$app.querySelector('.head')) render(h('div', { class: 'skeleton' }), h('div', { class: 'skeleton short' }));
+      if ($app.dataset.route !== state.route || !$app.querySelector('.head')) render(head(pageTitle(state.route)), h('div', { class: 'skeleton' }), h('div', { class: 'skeleton short' }));
       await views[state.route]();
     } catch (e) {
       if (isNetErr(e) && state.user && state.mode) return viewOffline();
       fail(e);
     }
+  }
+
+  function pageTitle(r) {
+    const name = state.business ? state.business.name : t('app');
+    const titles = {
+      home: name, collect: name, people: t('tabPeople'), bills: t('tabBills'), mybills: t('tabBills'), more: t('tabMore'),
+      readings: t('stepReadings'), notices: t('tabNotices'), subnotices: t('tabNotices'), invite: t('inviteAll'), collectors: t('collectors'),
+      reports: t('reports'), round: t('round'), late: t('lateTitle'), costs: t('costsTitle'), logs: t('appLogs'), today: t('tabToday')
+    };
+    return titles[r] || t('app');
   }
 
   function viewOffline() {
