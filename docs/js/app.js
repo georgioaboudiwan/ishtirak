@@ -110,7 +110,12 @@
     plus: 'M12 5v14M5 12h14',
     camera: 'M4 8h3l2-3h6l2 3h3v11H4zM12 17a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z',
     text: 'M4 7V5h11v2M9.5 5v14M7 19h5M14 12v-1.5h7V12M17.5 10.5V19M16 19h3',
-    hash: 'M5 9h14M5 15h14M10 4 8 20M16 4l-2 16'
+    hash: 'M5 9h14M5 15h14M10 4 8 20M16 4l-2 16',
+    mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21',
+    wrench: 'M14.5 3.5a5 5 0 0 0-4.6 6.8L3.5 16.7V20.5h3.8l6.4-6.4a5 5 0 0 0 6.8-4.6l-3 1.5-2.6-2.6 1.5-3z',
+    power: 'M12 3v8M6.8 6.5a7 7 0 1 0 10.4 0',
+    cash: 'M3 7h18v10H3zM12 14.8a2.8 2.8 0 1 0 0-5.6 2.8 2.8 0 0 0 0 5.6zM6.5 10v4M17.5 10v4',
+    gauge: 'M4 17a8 8 0 1 1 16 0M12 17l4.5-5.5'
   };
 
   function icon(name, cls) {
@@ -480,6 +485,7 @@
 
   async function route() {
     applyLang();
+    if (stopVoice) stopVoice();
     try {
       if (!state.user) { drawNav(false); return viewWelcome(); }
       if (state.cinvite) { drawNav(false); return await handleCollectorInvite(); }
@@ -1131,6 +1137,7 @@
   function lbpText(v) { return `${Number(v).toLocaleString('en-US')} ${t('lbpUnit')}`; }
 
   function payText(pay) {
+    if (pay.text) return pay.text;
     return `${money(pay.amount)}${pay.lbp_amount ? ` (${lbpText(pay.lbp_amount)})` : ''}`;
   }
 
@@ -1162,15 +1169,38 @@
     const old = debtBefore(b.subscriber_id, b.month);
     const rate = Number(biz.lbp_rate);
     const fullLbp = Math.round(rem * rate);
-    const amount = input('amount', { type: 'number', step: '0.01', min: '0', value: rem > 0 ? rem.toFixed(2) : '', inputmode: 'decimal' });
-    const amountLabel = h('span', null, t('amount'));
-    const cur = segmented('cur', [['usd', 'USD $'], ['lbp', t('lbpUnit')]], 'usd');
-    cur.addEventListener('change', () => {
-      const isLbp = cur.querySelector('input:checked').value === 'lbp';
-      amount.value = isLbp ? String(fullLbp) : rem.toFixed(2);
-      amount.step = isLbp ? '1000' : '0.01';
-      amountLabel.textContent = isLbp ? t('amountLbp') : t('amount');
-    });
+    const usdIn = input('usd', { type: 'number', step: '0.01', min: '0', value: rem > 0 ? rem.toFixed(2) : '', inputmode: 'decimal', placeholder: '0' });
+    const lbpIn = input('lbp', { type: 'number', step: '1000', min: '0', value: '', inputmode: 'numeric', placeholder: '0' });
+    const calc = h('div', { class: 'pay-calc' });
+    const split = () => {
+      const u = Math.max(0, Math.round(num(usdIn.value || 0) * 100) / 100);
+      const l = Math.max(0, Math.round(num(lbpIn.value || 0)));
+      const uPart = Math.min(u, rem);
+      const left = Math.round((rem - uPart) * 100) / 100;
+      const leftLbp = Math.round(left * rate);
+      const tol = rate * 0.005;
+      let lPart = 0; let lUsd = 0;
+      if (l > 0 && left > 0 && rate > 0) {
+        if (l >= leftLbp - tol) { lPart = Math.min(l, leftLbp); lUsd = left; } else { lPart = l; lUsd = Math.round((l / rate) * 100) / 100; }
+      }
+      const given = u + (rate > 0 ? l / rate : 0);
+      const change = Math.max(0, Math.round((given - uPart - lUsd) * 100) / 100);
+      return { u, l, uPart, lPart, lUsd, change, still: Math.max(0, Math.round((rem - uPart - lUsd) * 100) / 100) };
+    };
+    const drawCalc = () => {
+      const x = split();
+      const rows = [];
+      if (x.change > 0.004) rows.push(h('div', { class: 'row between change' }, h('span', null, t('changeBack')), h('strong', null, `${money(x.change)} ${t('orWord')} ${lbpText(Math.round((x.change * rate) / 1000) * 1000)}`)));
+      else if (x.uPart + x.lUsd > 0 && x.still > 0.004) rows.push(h('div', { class: 'row between' }, h('span', null, t('stillOwedAfter')), h('strong', { class: 'bad' }, money(x.still))));
+      else if (x.uPart + x.lUsd > 0) rows.push(h('div', { class: 'row between' }, h('span', null, t('coversBill')), h('strong', { class: 'ok' }, '✓')));
+      calc.replaceChildren(...rows);
+    };
+    drawCalc();
+    usdIn.addEventListener('input', drawCalc);
+    lbpIn.addEventListener('input', drawCalc);
+    const quick = h('div', { class: 'chips' },
+      h('button', { type: 'button', class: 'chip', onclick: () => { usdIn.value = rem.toFixed(2); lbpIn.value = ''; drawCalc(); } }, t('allUsd')),
+      rate > 0 ? h('button', { type: 'button', class: 'chip', onclick: () => { usdIn.value = ''; lbpIn.value = String(fullLbp); drawCalc(); } }, t('allLbp', { v: lbpText(fullLbp) })) : null);
     const note = input('note', { maxlength: 120 });
     const save = h('button', { type: 'submit', class: 'btn primary block' }, t('recordPayment'));
     let close = () => {};
@@ -1188,27 +1218,28 @@
     const form = rem > 0 ? h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
       e.preventDefault();
       const d = formData(e.target);
-      let a; let l = null;
-      if (d.cur === 'lbp') {
-        l = Math.round(num(amount.value));
-        const tol = rate * 0.005;
-        if (!(l > 0)) return toast(t('required'), 'bad');
-        if (l > fullLbp + tol) return toast(t('overpayment'), 'bad');
-        a = l >= fullLbp - tol ? rem : Math.round((l / rate) * 100) / 100;
-      } else {
-        a = Math.round(num(amount.value) * 100) / 100;
-        if (a > rem + 0.001) return toast(t('overpayment'), 'bad');
-      }
-      if (!(a > 0)) return toast(t('required'), 'bad');
+      const x = split();
+      if (!(x.uPart + x.lUsd > 0)) return toast(t('required'), 'bad');
       busy(save, true);
       try {
-        const pay = await payBill(b, a, d.method || 'cash', clean(note.value, 120), l);
-        close(); paymentToast(t('paymentSaved'), [pay], after); after();
-        receiptSheet(b, pay, p, rem - a);
+        const method = d.method || 'cash';
+        const n = clean(note.value, 120);
+        const made = [];
+        if (x.uPart > 0) made.push(await payBill(b, x.uPart, method, n));
+        if (x.lUsd > 0) made.push(await payBill(b, x.lUsd, method, made.length ? '' : n, x.lPart));
+        const paidNow = Math.round((x.uPart + x.lUsd) * 100) / 100;
+        const shown = Object.assign({}, made[0], {
+          amount: paidNow,
+          text: [x.uPart > 0 ? money(x.uPart) : null, x.lPart > 0 ? lbpText(x.lPart) : null].filter(Boolean).join(' + '),
+          change: x.change > 0.004 ? `${money(x.change)} ${t('orWord')} ${lbpText(Math.round((x.change * rate) / 1000) * 1000)}` : null
+        });
+        close(); paymentToast(t('paymentSaved'), made, after); after();
+        receiptSheet(b, shown, p, rem - paidNow);
       } catch (err) { fail(err); } finally { busy(save, false); }
     } },
-      cur,
-      h('label', { class: 'field' }, amountLabel, amount),
+      quick,
+      h('div', { class: 'grid2' }, field(t('paidUsd'), usdIn), field(t('paidLbp'), lbpIn)),
+      calc,
       segmented('method', [['cash', t('cash')], ['whish', 'Whish'], ['omt', 'OMT'], ['other', t('other')]], 'cash'),
       field(t('note'), note), save) : null;
     const line = (label, value, cls) => h('div', { class: 'row between' }, h('span', null, label), h('strong', { class: cls || '' }, value));
@@ -1240,7 +1271,7 @@
     const when = new Date(pay.paid_at).toLocaleString(state.lang === 'ar' ? 'ar-LB' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short' });
     const lines = [
       [t('date'), when], [t('customer'), name], [t('forMonth'), monthLabel(b.month)],
-      [t('amountPaid'), payText(pay)], [t('method'), t(pay.method)],
+      [t('amountPaid'), payText(pay)], pay.change ? [t('changeGiven'), pay.change] : null, [t('method'), t(pay.method)],
       who ? [t('collectedBy'), who] : null,
       [t('remaining'), money(Math.max(remAfter, 0))]
     ].filter(Boolean);
@@ -1299,7 +1330,7 @@
       seed(`people:owner:${biz.id}`, people, at);
       seed(`open:${biz.id}`, data.open || [], at);
       seed(`collectors:${biz.id}`, collectors, at);
-      return { tariff: data.tariff, readings: data.readings || [], bills: data.bills || [], payClaims: data.pay_claims || [], readClaims: data.read_claims || [] };
+      return { tariff: data.tariff, readings: data.readings || [], bills: data.bills || [], payClaims: data.pay_claims || [], readClaims: data.read_claims || [], requests: data.requests || [], upkeep: data.upkeep || null, notice: data.notice || null };
     }, ttl || 120000);
   }
 
@@ -1387,6 +1418,11 @@
     const rate = Number(biz.lbp_rate);
     const official = tariff.data && tariff.data.official_kwh_lbp ? Number(tariff.data.official_kwh_lbp) : 0;
     const aboveOfficial = official > 0 && rate > 0 && Number(tariff.data.kwh_price) * rate > official * 1.005;
+    const reqs = hd.requests || [];
+    const outages = reqs.filter((r) => r.kind === 'no_power' && r.reply !== 'onit').length;
+    const otherReqs = reqs.filter((r) => r.kind !== 'no_power').length;
+    const upkeep = upkeepRows(hd.upkeep, biz);
+    const load = loadInfo();
 
     const genBtn = h('button', { type: 'button', class: 'btn primary small', onclick: async (e) => {
       e.stopPropagation();
@@ -1417,11 +1453,13 @@
         h('button', { type: 'button', class: 'btn ghost block', onclick: () => go('invite') }, icon('send'), t('inviteAll'))) : null,
       people.length ? pushCard(t('pushAskOwner')) : null,
       people.length ? todayCard({
+        outages, subReqs: otherReqs,
         pending: pending.length, pendingList: pending, payClaims: state.payClaims.length, readClaims: state.readClaims.length,
         tariff: !!tariff.data, setPrices: () => tariffSheet(null, viewHome), missing: missingPeople.length, missingBuilding,
         bills: bills.data.length > 0, makeBills: () => genBtn.click(), unsent: unsent.length, send: () => sendQueue(unsent),
         unpaid: unpaid.length, late: late.filter((x) => !x.p.cut_at).length
       }) : null,
+      people.length ? powerCard(hd.notice, () => viewHome()) : null,
       h('div', { class: 'cols' },
         h('div', { class: 'stack' },
           h('section', { class: 'hero-card' },
@@ -1437,6 +1475,16 @@
             step(2, metered.length > 0 && readCount === metered.length, t('stepReadings'), (metered.length ? t('readingsCount', { n: readCount, total: metered.length }) : t('noMeteredShort')) + (waiting ? `${sep()}${t('draftsWaiting', { n: waiting })}` : ''), null, () => go('readings')),
             step(3, bills.data.length > 0, t('stepBills'), bills.data.length ? t('billsMade', { n: bills.data.length }) : t('billsNotMade'), genBtn))),
         h('div', { class: 'stack' },
+          outageCards(reqs, () => viewHome()),
+          requestCards(reqs, () => viewHome()),
+          upkeep.map((u) => h('button', { type: 'button', class: 'late-row card', onclick: () => (u.kind === 'oil' ? oilSheet(() => viewHome()) : go('costs')) },
+            h('span', { class: 'row-ic warn' }, icon('wrench')),
+            h('div', { class: 'grow' }, h('strong', null, u.title), h('small', { class: 'muted' }, u.sub)),
+            h('span', { class: 'chev flip' }, '›'))),
+          load.cap && load.pct >= 0.9 ? h('button', { type: 'button', class: 'late-row card', onclick: () => go('people') },
+            h('span', { class: `row-ic ${load.pct > 1 ? 'bad' : 'warn'}` }, icon('gauge')),
+            h('div', { class: 'grow' }, h('strong', null, load.pct > 1 ? t('loadOver') : t('loadNear')), h('small', { class: 'muted' }, t('loadLine', { used: load.used, cap: load.cap }))),
+            h('span', { class: 'chev flip' }, '›')) : null,
           state.payClaims.length ? h('section', { class: 'card flush', id: 'claims-card' },
             h('h3', { class: 'card-title' }, t('claimsTitle'), h('span', { class: 'badge' }, state.payClaims.length)),
             state.payClaims.map((c) => payClaimRow(c, viewHome))) : null,
@@ -1630,6 +1678,13 @@
         h('button', { type: 'button', class: 'btn ghost small', onclick: importSheet }, t('import')),
         h('button', { type: 'button', class: 'btn primary small desk-only', onclick: () => personForm(null, again) }, icon('plus'), t('add')))),
       people.length ? search : null,
+      base.length ? (() => {
+        const l = loadInfo();
+        if (!l.cap) return h('button', { type: 'button', class: 'load-line', onclick: bizSheet }, icon('gauge'), h('span', { class: 'grow' }, t('loadTotal', { used: l.used })), h('span', { class: 'link small' }, t('loadSet')));
+        const bar = h('span', { class: 'bar' }, h('i'));
+        bar.firstChild.style.width = `${Math.round(Math.min(1, l.pct) * 100)}%`;
+        return h('div', { class: `load-line ${l.pct > 1 ? 'bad' : l.pct >= 0.9 ? 'warn' : ''}` }, icon('gauge'), h('span', { class: 'grow' }, t('loadLine', { used: l.used, cap: l.cap }), bar));
+      })() : null,
       base.length ? h('div', { class: 'chips' }, chipKeys.map((c) => h('button', { type: 'button', class: c === chip ? 'chip on' : 'chip', onclick: () => setChip(c) }, `${t(`pf_${c}`)} ${base.filter(tests[c]).length}`))) : null,
       buildings.length > 1 && buildings.length <= 30 ? h('div', { class: 'chips' }, buildings.map((b) => h('button', { type: 'button', class: b === bld ? 'chip on' : 'chip', onclick: () => setBld(b) }, b))) : null,
       list.length ? h('div', { class: 'card flush grid-list' }, list.map((p) => h('div', { class: `item ${p.active ? '' : 'dim'}`, role: 'button', tabindex: '0', onclick: () => personSheet(p) },
@@ -1666,7 +1721,9 @@
         debtTotal(p.id) > 0 ? line(t('totalOwed'), money(debtTotal(p.id)), 'amount bad') : null),
       h('small', { class: 'muted' }, t('sendLinkHint')),
       linkButtons(p),
-      h('button', { type: 'button', class: 'btn ghost block', onclick: () => { close(); personForm(p, () => viewPeople()); } }, t('edit')),
+      h('div', { class: 'grid2' },
+        h('button', { type: 'button', class: 'btn ghost', onclick: () => { close(); statementSheet(p); } }, icon('bills'), t('statement')),
+        h('button', { type: 'button', class: 'btn ghost', onclick: () => { close(); personForm(p, () => viewPeople()); } }, t('edit'))),
       h('div', { class: 'grid2' },
         h('button', { type: 'button', class: 'btn ghost', onclick: async () => {
           if (!(await confirmBox(t('resetConfirm'), t('resetAccess')))) return;
@@ -1700,6 +1757,9 @@
       const s = readSubscription(d);
       if (!s) return;
       next.meter = s.meter;
+      const extra = s.amps - (isNew ? 0 : Number(p.amps) || 0);
+      const l = loadInfo(extra > 0 ? extra : 0);
+      if (extra > 0 && l.cap && l.used > l.cap && !(await confirmBox(t('loadConfirm', { used: l.used, cap: l.cap }), t('addAnyway')))) return;
       busy(save, true);
       try {
         const sk = isNew ? V.genKey() : p.sk;
@@ -1883,10 +1943,10 @@
       });
       const row = h('div', { class: 'item static' });
       upd();
-      inputs.push({ r, inp });
+      inputs.push({ r, inp, row });
       const hasPhoto = r.photo || pendingPhotos(m).includes(r.id);
-      const cam = offline ? null : h('button', { type: 'button', class: `cam ${hasPhoto ? 'has' : ''}`, 'aria-label': hasPhoto ? t('photoRetake') : t('photoTake'), title: t('meterPhoto') }, icon('camera'));
-      if (cam) cam.addEventListener('click', () => uploadMeterPhoto(r, m, cam));
+      const cam = offline ? null : h('button', { type: 'button', class: `cam ${hasPhoto ? 'has' : ''}`, 'aria-label': t('scanTitle'), title: t('scanTitle') }, icon('camera'));
+      if (cam) cam.addEventListener('click', () => scanReading(r, m, cam, inp));
       const claimed = claims.get(r.id);
       const useClaim = claimed !== undefined && inp.value === '' ? h('button', { type: 'button', class: 'link small', onclick: () => {
         inp.value = String(claimed); inp.dispatchEvent(new Event('input')); useClaim.remove();
@@ -1932,8 +1992,12 @@
         if (isNetErr(err)) toast(t('savedOffline', { n: Object.keys(vals).length }), 'warn'); else fail(err);
       } finally { busy(save, false); }
     } }, t('saveReadings'));
+    const voice = voiceControl(inputs);
     render(head(t('stepReadings'), monthSwitch(viewReadings), 'home'),
       offline ? h('p', { class: 'notice-bar' }, t('offlineList')) : null,
+      items.length && !offline ? h('p', { class: 'muted small' }, t('scanTip')) : null,
+      voice ? voice.btn : null,
+      voice ? voice.bar : null,
       items.length ? h('div', { class: 'readings-list' }, grouped) : empty(t('noMetered')),
       items.length ? save : null);
   }
@@ -1996,20 +2060,51 @@
 
   async function viewCollectors() {
     const biz = state.business;
-    const [list, pays] = await Promise.all([
+    const [list, pays, cash] = await Promise.all([
       loadCollectors(),
-      sb.from('payments').select('amount, collector_id, bills!inner(business_id)').eq('bills.business_id', biz.id).gte('paid_at', startOfToday())
+      sb.from('payments').select('amount, collector_id, bills!inner(business_id)').eq('bills.business_id', biz.id).gte('paid_at', startOfToday()),
+      sb.rpc('collector_cash', { p_business: biz.id })
     ]);
     if (pays.error) throw pays.error;
+    if (cash.error) throw cash.error;
     const today = (id) => pays.data.filter((x) => x.collector_id === id).reduce((a, x) => a + Number(x.amount), 0);
+    const held = new Map((cash.data.list || []).map((x) => [x.collector_id, x]));
+    const holding = (cash.data.list || []).filter((x) => Number(x.usd) > 0 || Number(x.lbp) > 0);
+    const cashText = (x) => [Number(x.usd) > 0 ? money(x.usd) : null, Number(x.lbp) > 0 ? lbpText(x.lbp) : null].filter(Boolean).join(' + ');
+    const receive = (c, x) => {
+      const btn = h('button', { type: 'button', class: 'btn primary small' }, icon('check'), t('cashGot'));
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        busy(btn, true);
+        try {
+          const { data, error } = await sb.from('handovers').insert({ business_id: biz.id, collector_id: c.id, usd: Number(x.usd), lbp: Number(x.lbp), until: cash.data.at }).select('id').single();
+          if (error) throw error;
+          toast(t('cashGotDone', { name: c.name, amt: cashText(x) }), 'good', { label: t('undoAction'), fn: async () => {
+            const r = await sb.from('handovers').delete().eq('id', data.id);
+            if (r.error) return fail(r.error);
+            viewCollectors().catch(fail);
+          } });
+          viewCollectors().catch(fail);
+        } catch (err) { fail(err); busy(btn, false); }
+      });
+      return btn;
+    };
     render(head(t('collectors'), h('button', { type: 'button', class: 'btn primary small', onclick: collectorForm }, icon('plus'), t('add')), 'more'),
       h('p', { class: 'muted' }, t('collectorsBody')),
-      list.length ? h('div', { class: 'card flush' }, list.map((c) => h('div', { class: `item ${c.active ? '' : 'dim'}`, role: 'button', tabindex: '0', onclick: () => collectorSheet(c) },
-        avatar(c.name),
-        h('div', { class: 'grow' }, h('strong', null, c.name),
-          c.phone ? h('small', { class: 'muted' }, ltr(c.phone)) : null,
-          h('span', { class: `state ${c.active && c.devices > 0 ? 'ok' : ''}` }, !c.active ? t('collectorOff') : c.devices > 0 ? t('linked') : t('notLinked'))),
-        h('div', { class: 'end-col' }, h('strong', { class: 'amount' }, money(today(c.id))), h('small', { class: 'muted' }, t('tabToday'))))))
+      holding.length ? h('section', { class: 'hero-card' }, h('small', null, t('cashHeld')),
+        h('div', { class: 'hero-num' }, money(holding.reduce((a, x) => a + Number(x.total), 0))),
+        h('div', { class: 'row between' }, h('span', null, t('cashHeldSub', { n: holding.length })))) : null,
+      list.length ? h('div', { class: 'card flush' }, list.map((c) => {
+        const x = held.get(c.id);
+        const has = x && (Number(x.usd) > 0 || Number(x.lbp) > 0);
+        return h('div', { class: `item ${c.active ? '' : 'dim'}`, role: 'button', tabindex: '0', onclick: () => collectorSheet(c) },
+          avatar(c.name),
+          h('div', { class: 'grow' }, h('strong', null, c.name),
+            c.phone ? h('small', { class: 'muted' }, ltr(c.phone)) : null,
+            h('span', { class: `state ${c.active && c.devices > 0 ? 'ok' : ''}` }, !c.active ? t('collectorOff') : c.devices > 0 ? t('linked') : t('notLinked')),
+            has ? h('small', { class: 'warn-text' }, t('cashWith', { amt: cashText(x), n: x.n })) : null),
+          h('div', { class: 'end-col' }, h('strong', { class: 'amount' }, money(today(c.id))), h('small', { class: 'muted' }, t('tabToday')), has ? receive(c, x) : null));
+      }))
         : empty(t('noCollectors'), h('button', { type: 'button', class: 'btn primary', onclick: collectorForm }, icon('plus'), t('addCollector'))));
   }
 
@@ -2089,11 +2184,13 @@
   }
 
   async function viewToday() {
-    const [, res] = await Promise.all([
+    const [, res, cash] = await Promise.all([
       loadPeople(),
-      sb.from('payments').select(`${PAY}, bills(subscriber_id, month)`).eq('collector_id', state.role.id).gte('paid_at', startOfToday()).order('paid_at', { ascending: false })
+      sb.from('payments').select(`${PAY}, bills(subscriber_id, month)`).eq('collector_id', state.role.id).gte('paid_at', startOfToday()).order('paid_at', { ascending: false }),
+      sb.rpc('collector_cash', { p_business: state.business.id })
     ]);
     if (res.error) throw res.error;
+    const mineCash = !cash.error && cash.data && (cash.data.list || [])[0];
     const pays = res.data;
     const total = pays.reduce((a, x) => a + Number(x.amount), 0);
     const usd = pays.filter((x) => !x.lbp_amount).reduce((a, x) => a + Number(x.amount), 0);
@@ -2102,6 +2199,10 @@
       h('section', { class: 'hero-card clear' }, h('small', null, t('collectedToday')), h('div', { class: 'hero-num' }, money(total)),
         h('div', { class: 'row between' }, h('span', null, t('usdReceived')), h('strong', { class: 'amount' }, money(usd))),
         h('div', { class: 'row between' }, h('span', null, t('lbpReceived')), h('strong', { class: 'amount' }, lbpText(lbpSum)))),
+      mineCash && (Number(mineCash.usd) > 0 || Number(mineCash.lbp) > 0) ? h('section', { class: 'card stack tight handover' },
+        h('small', { class: 'muted' }, t('cashToGive')),
+        h('strong', { class: 'amount big' }, [Number(mineCash.usd) > 0 ? money(mineCash.usd) : null, Number(mineCash.lbp) > 0 ? lbpText(mineCash.lbp) : null].filter(Boolean).join(' + ')),
+        h('small', { class: 'muted' }, mineCash.since ? t('cashSince', { d: `${dateLabel(mineCash.since)} ${timeLabel(mineCash.since)}`, n: mineCash.n }) : t('cashSinceStart', { n: mineCash.n }))) : null,
       pays.length ? h('div', { class: 'card flush' }, pays.map((x) => h('div', { class: 'item static' },
         avatar(personName(x.bills && x.bills.subscriber_id)),
         h('div', { class: 'grow' }, h('strong', null, personName(x.bills && x.bills.subscriber_id)),
@@ -2184,12 +2285,41 @@
             stat(t('billsCount'), String(bills.length)), stat(t('kwhTotal'), String(Math.round(sum(bills, (b) => b.kwh))))),
           h('button', { type: 'button', class: 'btn ghost block', onclick: exportBills }, icon('bills'), t('exportBills')),
           h('button', { type: 'button', class: 'btn ghost block', onclick: () => exportPays().catch(fail) }, icon('bills'), t('exportPayments')),
+          h('button', { type: 'button', class: 'btn primary block', onclick: (e) => { const btn = e.currentTarget; busy(btn, true); reportPdf(bills, pays, methods, who, oldTotal).catch(fail).finally(() => busy(btn, false)); } }, icon('bills'), t('reportPdf')),
           h('button', { type: 'button', class: 'btn ghost block', onclick: () => go('costs') }, icon('tag'), t('costsTitle'))),
         h('div', { class: 'stack' },
           h('section', { class: 'card flush' }, h('h3', { class: 'card-title' }, t('byMethod')),
             methods.length ? methods.map(([k, v]) => stat(k, money(v))) : h('p', { class: 'muted pad' }, t('noPaymentsYet'))),
           h('section', { class: 'card flush' }, h('h3', { class: 'card-title' }, t('byCollector')),
             who.length ? who.map(([k, v]) => stat(k, money(v))) : h('p', { class: 'muted pad' }, t('noPaymentsYet'))))));
+  }
+
+  async function reportPdf(bills, pays, methods, who, oldTotal) {
+    const biz = state.business;
+    const m = monthDate(state.month);
+    const next = monthDate(shiftMonth(state.month, 1));
+    const ex = await sb.from('expenses').select('kind, amount, liters').eq('business_id', biz.id).gte('day', m).lt('day', next);
+    if (ex.error) throw ex.error;
+    const sum = (list, f) => list.reduce((a, x) => a + Number(f(x) || 0), 0);
+    const billed = sum(bills, (b) => b.amount);
+    const collected = sum(bills, (b) => b.paid_amount);
+    const costs = sum(ex.data, (x) => x.amount);
+    const paidCount = bills.filter((b) => Number(b.paid_amount) >= Number(b.amount)).length;
+    const lines = [
+      [t('billsCount'), `${bills.length}${sep()}${t('rpPaidOf', { n: paidCount })}`],
+      [t('billedTotal'), money(billed)],
+      [t('collectedTotal'), `${money(collected)} (${billed > 0 ? Math.round((collected / billed) * 100) : 0}%)`],
+      [t('unpaidTotal'), money(billed - collected)],
+      [t('oldUnpaid'), money(oldTotal)],
+      [t('kwhTotal'), String(Math.round(sum(bills, (b) => b.kwh)))],
+      [t('costsTotal'), money(costs)],
+      ...COST_KINDS.map((k) => [`   ${t(`cost_${k}`)}`, sum(ex.data.filter((x) => x.kind === k), (x) => x.amount)]).filter(([, v]) => v > 0).map(([k, v]) => [k, money(v)]),
+      [t('profitMonth'), money(collected - costs)],
+      ...methods.map(([k, v]) => [`${t('byMethod')}: ${k}`, money(v)]),
+      ...who.map(([k, v]) => [`${t('byCollector')}: ${k}`, money(v)])
+    ].map(([k, v]) => [k.trim(), v]);
+    const img = await receiptImage(biz.name, `${t('monthlyReport')}${sep()}${monthLabel(m)}`, lines);
+    await shareFile(`ishtirak-report-${state.month}.pdf`, makePdf(img.jpeg, img.w, img.h), 'application/pdf');
   }
 
   function viewInviteAll() {
@@ -2215,7 +2345,9 @@
     const { data, error } = await sb.from('notices').select('*').eq('business_id', biz.id).order('created_at', { ascending: false }).limit(50);
     if (error) throw error;
     const btn = h('button', { type: 'submit', class: 'btn primary block' }, t('postNotice'));
+    const last = data.find((n) => n.kind);
     render(head(t('tabNotices'), null, 'more'),
+      powerCard(last && Date.now() - new Date(last.created_at).getTime() < 2 * 86400000 ? last : null, () => viewNotices()),
       h('form', { class: 'card stack', novalidate: true, onsubmit: async (e) => {
         e.preventDefault();
         const d = formData(e.target);
@@ -2237,7 +2369,7 @@
     if (!data.length) return empty(t('noNotices'));
     const bizName = (id) => { const s = state.subs.find((x) => x.business_id === id); return s ? s.business.name : ''; };
     return h('div', { class: 'stack' }, data.map((n) => h('article', { class: 'card stack tight' },
-      h('div', { class: 'row between' }, h('strong', null, n.title), h('small', { class: 'muted' }, dateLabel(n.created_at))),
+      h('div', { class: 'row between' }, h('strong', null, n.kind ? powerText(n.kind, n.meta) : n.title), h('small', { class: 'muted' }, `${dateLabel(n.created_at)} ${timeLabel(n.created_at)}`)),
       n.body ? h('p', { class: 'pre' }, n.body) : null,
       !canDelete ? h('small', { class: 'muted' }, bizName(n.business_id)) : null,
       canDelete ? h('button', { type: 'button', class: 'link bad', onclick: async () => {
@@ -2251,7 +2383,7 @@
     const active = state.subs.filter((s) => s.status === 'active');
     const waiting = state.subs.filter((s) => s.status === 'pending');
     const ids = active.map((s) => s.id);
-    let mh = { bills: [], photos: [], pay_claims: [], read_claims: [] };
+    let mh = { bills: [], photos: [], pay_claims: [], read_claims: [], requests: [], notices: [] };
     if (ids.length) {
       const { data, error } = await sb.rpc('my_home');
       if (error) throw error;
@@ -2274,7 +2406,14 @@
         const due = mine.reduce((a, b) => a + Number(b.amount) - Number(b.paid_amount), 0);
         const latest = mine.length ? mine[0].month : '';
         const oldDue = mine.filter((b) => b.month < latest).reduce((a, b) => a + Number(b.amount) - Number(b.paid_amount), 0);
+        const notice = (mh.notices || []).find((n) => n.business_id === s.business_id);
+        const reqs = (mh.requests || []).filter((r) => r.subscriber_id === s.id);
+        const lastRead = mine.find((b) => b.billing_type === 'metered' && b.curr_reading !== null);
+        const hint = lastRead ? { prev: Number(lastRead.curr_reading), use: Number(lastRead.kwh) || 0 } : null;
         return h('div', { class: 'cols' },
+          notice ? h('section', { class: `power-banner ${notice.kind || 'info'}` }, h('span', { class: 'row-ic' }, icon(notice.kind === 'on' ? 'bolt' : notice.kind === 'maint' ? 'wrench' : notice.kind === 'off' ? 'power' : 'bell')),
+            h('div', { class: 'grow' }, h('strong', null, notice.kind ? powerText(notice.kind, notice.meta) : notice.title),
+              h('small', null, [biz.name, `${dateLabel(notice.created_at)} ${timeLabel(notice.created_at)}`, notice.kind ? null : notice.body].filter(Boolean).join(sep())))) : null,
           h('section', { class: `hero-card ${due > 0 ? '' : 'clear'}` },
             h('small', null, biz.name),
             h('div', { class: 'hero-num' }, money(due)),
@@ -2287,8 +2426,10 @@
               const rcl = readOf.get(s.id);
               if (rcl && rcl.status === 'pending') return h('div', { class: 'old-row' }, h('span', null, t('readingWaiting', { v: Number(rcl.value) })));
               if (rcl && rcl.status === 'accepted') return h('div', { class: 'old-row' }, h('span', null, t('readingAccepted', { v: Number(rcl.value) })));
-              return h('button', { type: 'button', class: 'btn glass block', onclick: () => readingSheet(s, again) }, icon('camera'), t('sendReading'));
+              return h('button', { type: 'button', class: 'btn glass block', onclick: () => readingSheet(s, again, hint) }, icon('camera'), t('sendReading'));
             })() : null,
+            subRequestLines(reqs),
+            h('button', { type: 'button', class: 'btn glass block', onclick: () => subRequestSheet(s, again) }, icon('chat'), t('rqAsk')),
             biz.phone ? h('a', { class: 'btn glass block', href: `tel:+${intlPhone(biz.phone)}` }, icon('phone'), t('callOwner')) : null),
           usageChart(mine),
           h('section', { class: 'card flush' },
@@ -2337,7 +2478,6 @@
     } }, personFields(s.info), save));
   }
 
-  // ===== Notifications =====
   const nativePush = () => isNative && cfg.nativePush && !!plugins.PushNotifications;
   function isIOS() { return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
   function standalone() { try { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; } catch { return false; } }
@@ -2386,7 +2526,6 @@
     const s = await reg.pushManager.getSubscription();
     if (s) { await sb.rpc('drop_push', { p_endpoint: s.endpoint }); await s.unsubscribe(); }
   }
-  // Keeps the server copy current (new sign-in on this device, language change).
   async function refreshPush() {
     try {
       if (!state.user || !webPushOk() || Notification.permission !== 'granted' || !store.get('push')) return;
@@ -2444,7 +2583,6 @@
     } }, h('p', { class: 'muted' }, t('remindersBody')), seg, h('small', { class: 'muted' }, t('remindersHint')), save));
   }
 
-  // ===== Meter photos =====
   function photoPath(bizId, subId, month) { return `${bizId}/${subId}/${String(month).slice(0, 7)}.bin`; }
   function photoKey(month) { return `ph:${state.business.id}:${month}`; }
   function pendingPhotos(month) { try { return JSON.parse(store.get(photoKey(month)) || '[]'); } catch { return []; } }
@@ -2479,11 +2617,26 @@
     });
   }
 
-  async function uploadMeterPhoto(row, month, btn) {
+  async function scanReading(row, month, btn, inp) {
+    const res = await scanMeter(row.title, { prev: row.prev, use: row.use });
+    if (!res) return;
+    if (res.value !== null && res.value !== undefined) {
+      inp.value = String(res.value);
+      inp.dispatchEvent(new Event('input'));
+      inp.classList.add('scanned');
+      toast(res.plausible ? t('scanGot', { v: res.value }) : t('scanCheck', { v: res.value }), res.plausible ? 'good' : 'warn');
+    } else {
+      toast(t('scanFailed'), 'warn');
+      inp.focus();
+    }
+    if (res.file) await uploadMeterPhoto(row, month, btn, res.file, true);
+  }
+
+  async function uploadMeterPhoto(row, month, btn, given, quiet) {
     const p = state.people.find((x) => x.id === row.id);
     if (!p || !p.sk) return toast(t('error'), 'bad');
-    if (!navigator.onLine) return toast(t('photoOnline'), 'warn');
-    const file = await pickPhoto();
+    if (!navigator.onLine) return quiet ? null : toast(t('photoOnline'), 'warn');
+    const file = given || await pickPhoto();
     if (!file) return;
     busy(btn, true);
     try {
@@ -2501,7 +2654,7 @@
       row.photo = true;
       btn.classList.add('has');
       btn.setAttribute('aria-label', t('photoRetake'));
-      toast(t('photoSaved'), 'good');
+      if (!quiet) toast(t('photoSaved'), 'good');
     } catch (e) { fail(e); } finally { busy(btn, false); }
   }
 
@@ -2523,7 +2676,453 @@
     }
   }
 
-  // ===== Import from Excel / CSV =====
+  function imageFromFile(file) {
+    return createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('image')); };
+      img.src = url;
+    }));
+  }
+
+  function cropCanvas(src, sx, sy, sw, sh) {
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(sw)); c.height = Math.max(1, Math.round(sh));
+    c.getContext('2d').drawImage(src, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    return c;
+  }
+
+  async function canvasFile(canvas) {
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+    return blob ? new File([blob], 'meter.jpg', { type: 'image/jpeg' }) : null;
+  }
+
+  async function readMeter(crop, hint, status) {
+    if (!window.MeterOCR) return null;
+    if (status) status.textContent = t('scanReading');
+    try { return await Promise.race([window.MeterOCR.read(crop, hint), new Promise((r) => setTimeout(() => r(null), 30000))]); } catch (e) { logError(e, 'ocr'); return null; }
+  }
+
+  function scanMeter(title, hint) {
+    return new Promise((resolve) => {
+      let stream = null; let done = false; let torchOn = false;
+      const video = h('video', { class: 'scan-video', playsinline: '', autoplay: '' });
+      video.muted = true;
+      const frame = h('div', { class: 'scan-frame' });
+      const status = h('p', { class: 'scan-status' }, t('scanHint'));
+      const shot = h('button', { type: 'button', class: 'scan-shot', 'aria-label': t('scanTake') });
+      const torch = h('button', { type: 'button', class: 'scan-icon', hidden: true, 'aria-label': t('torch') }, icon('bolt'));
+      const pick = h('button', { type: 'button', class: 'scan-side' }, t('scanPick'));
+      const stopCam = () => { if (stream) stream.getTracks().forEach((tr) => tr.stop()); stream = null; };
+      const onKey = (e) => { if (e.key === 'Escape') finish(null); };
+      const wrap = h('div', { class: 'scan', role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
+        video, frame,
+        h('div', { class: 'scan-top' }, h('button', { type: 'button', class: 'scan-icon', 'aria-label': t('cancel'), onclick: () => finish(null) }, '×'), h('strong', null, title), torch),
+        status,
+        h('div', { class: 'scan-bar' }, pick, shot, h('span', { class: 'scan-side' })));
+      function finish(v) {
+        if (done) return;
+        done = true;
+        stopCam();
+        wrap.remove();
+        document.removeEventListener('keydown', onKey);
+        resolve(v);
+      }
+      document.addEventListener('keydown', onKey);
+      document.body.append(wrap);
+      if (window.MeterOCR) window.MeterOCR.warm();
+      const fromFile = async () => {
+        const f = await pickPhoto();
+        if (!f || done) return;
+        busy(shot, true);
+        stopCam();
+        try {
+          const img = await imageFromFile(f);
+          const crop = cropCanvas(img, img.width * 0.06, img.height * 0.3, img.width * 0.88, img.height * 0.4);
+          const r = await readMeter(crop, hint, status);
+          finish({ value: r ? r.value : null, plausible: !!(r && r.plausible), file: f });
+        } catch (e) { fail(e); finish(null); }
+      };
+      pick.addEventListener('click', fromFile);
+      shot.addEventListener('click', async () => {
+        if (!stream || !video.videoWidth) return fromFile();
+        busy(shot, true);
+        const vw = video.videoWidth; const vh = video.videoHeight;
+        const er = video.getBoundingClientRect(); const fr = frame.getBoundingClientRect();
+        const k = Math.max(er.width / vw, er.height / vh);
+        const ox = (vw * k - er.width) / 2; const oy = (vh * k - er.height) / 2;
+        const full = cropCanvas(video, 0, 0, vw, vh);
+        video.pause();
+        stopCam();
+        const crop = cropCanvas(full, (fr.left - er.left + ox) / k, (fr.top - er.top + oy) / k, fr.width / k, fr.height / k);
+        const r = await readMeter(crop, hint, status);
+        finish({ value: r ? r.value : null, plausible: !!(r && r.plausible), file: await canvasFile(full) });
+      });
+      torch.addEventListener('click', async () => {
+        const tr = stream && stream.getVideoTracks()[0];
+        if (!tr) return;
+        torchOn = !torchOn;
+        try { await tr.applyConstraints({ advanced: [{ torch: torchOn }] }); torch.classList.toggle('on', torchOn); } catch { torchOn = false; }
+      });
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { status.textContent = t('scanNoCamera'); return; }
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }).then((st) => {
+        if (done) { st.getTracks().forEach((tr) => tr.stop()); return; }
+        stream = st;
+        video.srcObject = st;
+        video.play().catch(() => {});
+        const tr = st.getVideoTracks()[0];
+        const caps = tr && tr.getCapabilities ? tr.getCapabilities() : {};
+        if (caps && caps.torch) torch.hidden = false;
+      }).catch(() => { status.textContent = t('scanNoCamera'); });
+    });
+  }
+
+  let stopVoice = null;
+  function voiceControl(inputs) {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR || !inputs.length) return null;
+    let rec = null; let on = false; let cur = 0;
+    const label = h('span', null, t('voiceStart'));
+    const btn = h('button', { type: 'button', class: 'btn ghost block voice-btn' }, icon('mic'), label);
+    const say = h('span', null);
+    const bar = h('div', { class: 'voice-bar', hidden: true, 'aria-live': 'polite' }, h('span', { class: 'voice-dot' }), say);
+    const nextEmpty = (from) => { for (let i = from; i < inputs.length; i++) if (inputs[i].inp.value === '') return i; return -1; };
+    const mark = (again) => {
+      inputs.forEach((x, j) => x.row.classList.toggle('listening', on && j === cur));
+      const x = inputs[cur];
+      if (!on || !x) return;
+      say.textContent = t(again ? 'voiceAgain' : 'voiceSay', { name: x.r.title });
+      x.row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    };
+    const stop = () => {
+      on = false;
+      if (rec) { try { rec.abort(); } catch {} }
+      rec = null;
+      btn.classList.remove('on');
+      label.textContent = t('voiceStart');
+      bar.hidden = true;
+      mark();
+      if (stopVoice === stop) stopVoice = null;
+    };
+    const heard = (text) => {
+      if (!on) return;
+      const s = String(text).toLowerCase().replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/٫/g, '.');
+      if (/\b(stop|done)\b|وقف|خلص|خلصنا/.test(s)) return stop();
+      if (/\b(next|skip)\b|التالي|بعدو|تخط/.test(s)) { cur = Math.min(inputs.length - 1, cur + 1); return mark(); }
+      if (/\b(back|previous)\b|رجوع|ارجع|قبلو/.test(s)) { cur = Math.max(0, cur - 1); return mark(); }
+      const mt = s.replace(/(\d)[\s,،'](?=\d)/g, '$1').match(/\d+(?:\.\d+)?/);
+      if (!mt) return mark(true);
+      const x = inputs[cur];
+      x.inp.value = mt[0];
+      x.inp.dispatchEvent(new Event('input'));
+      if (navigator.vibrate) navigator.vibrate(15);
+      let n = nextEmpty(cur + 1);
+      if (n < 0) n = nextEmpty(0);
+      if (n < 0) { stop(); toast(t('voiceDone'), 'good'); return; }
+      cur = n;
+      mark();
+    };
+    const start = () => {
+      rec = new SR();
+      rec.lang = state.lang === 'ar' ? 'ar-LB' : 'en-US';
+      rec.continuous = true;
+      rec.interimResults = false;
+      rec.maxAlternatives = 3;
+      rec.onresult = (e) => {
+        const r = e.results[e.results.length - 1];
+        if (!r || !r.isFinal) return;
+        let pick = r[0].transcript;
+        for (let i = 0; i < r.length; i++) if (/[0-9٠-٩]/.test(r[i].transcript)) { pick = r[i].transcript; break; }
+        heard(pick);
+      };
+      rec.onerror = (e) => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed' || e.error === 'audio-capture') { toast(t('voiceDenied'), 'bad'); stop(); } };
+      rec.onend = () => { if (on && rec) { try { rec.start(); } catch { stop(); } } };
+      try { rec.start(); } catch { stop(); }
+    };
+    btn.addEventListener('click', () => {
+      if (on) return stop();
+      if (stopVoice) stopVoice();
+      const f = inputs.findIndex((x) => x.inp === document.activeElement);
+      cur = f >= 0 ? f : Math.max(0, nextEmpty(0));
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+      on = true;
+      stopVoice = stop;
+      btn.classList.add('on');
+      label.textContent = t('voiceStop');
+      bar.hidden = false;
+      mark();
+      start();
+    });
+    return { btn, bar };
+  }
+
+  function powerText(kind, meta) {
+    if (kind === 'off') return t('pwOffMsg');
+    if (kind === 'on') return t('pwOnMsg');
+    return t('pwMaintMsg', { from: (meta && meta.from) || '…', to: (meta && meta.to) || '…' });
+  }
+
+  function timeLabel(d) { return new Date(d).toLocaleTimeString(state.lang === 'ar' ? 'ar-LB' : 'en-GB', { hour: '2-digit', minute: '2-digit' }); }
+
+  function noAppPeople() { return state.people.filter((p) => p.active && p.status !== 'pending' && !p.cut_at && p.info.phone && !(p.devices > 0)); }
+
+  async function postPower(kind, meta, after) {
+    const biz = state.business;
+    const { data, error } = await sb.from('notices').insert({ business_id: biz.id, title: powerText(kind, meta), kind, meta: meta || null }).select('id').single();
+    if (error) throw error;
+    toast(t('pwSent'), 'good', { label: t('undoAction'), fn: async () => {
+      const r = await sb.from('notices').delete().eq('id', data.id);
+      if (r.error) return fail(r.error);
+      toast(t('pwUndone'));
+      after();
+    } });
+    after();
+  }
+
+  function maintSheet(after) {
+    const now = new Date();
+    const hh = (d) => `${String(d.getHours()).padStart(2, '0')}:00`;
+    const from = input('from', { type: 'time', value: hh(new Date(now.getTime() + 3600000)), required: true });
+    const to = input('to', { type: 'time', value: hh(new Date(now.getTime() + 3 * 3600000)), required: true });
+    const save = h('button', { type: 'submit', class: 'btn primary block' }, t('pwPost'));
+    const close = sheet(t('pwMaint'), h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
+      e.preventDefault();
+      if (!from.value || !to.value) return toast(t('required'), 'bad');
+      busy(save, true);
+      try { await postPower('maint', { from: from.value, to: to.value }, after); close(); } catch (err) { fail(err); } finally { busy(save, false); }
+    } },
+      h('p', { class: 'muted' }, t('pwMaintBody')),
+      h('div', { class: 'grid2' }, field(t('fromTime'), from), field(t('toTime'), to)),
+      save));
+  }
+
+  function powerCard(last, after) {
+    const fire = (kind) => async (e) => {
+      const btn = e.currentTarget;
+      busy(btn, true);
+      try { await postPower(kind, null, after); } catch (err) { fail(err); } finally { busy(btn, false); }
+    };
+    const recent = last && last.kind && Date.now() - new Date(last.created_at).getTime() < 6 * 3600000 ? last : null;
+    const off = recent && recent.kind === 'off';
+    const noApp = recent ? noAppPeople() : [];
+    return h('section', { class: `card power-card ${off ? 'off' : ''}` },
+      h('div', { class: 'row between' },
+        h('div', { class: 'grow' }, h('strong', null, t('pwTitle')),
+          h('small', { class: 'muted' }, recent ? `${powerText(recent.kind, recent.meta).replace(/[.。]$/, '')}${sep()}${timeLabel(recent.created_at)}` : t('genHint')))),
+      h('div', { class: 'power-btns' },
+        off ? null : h('button', { type: 'button', class: 'btn ghost small', onclick: fire('off') }, icon('power'), t('pwOff')),
+        h('button', { type: 'button', class: `btn small ${off ? 'primary' : 'ghost'}`, onclick: fire('on') }, icon('bolt'), t('pwOn')),
+        h('button', { type: 'button', class: 'btn ghost small', onclick: () => maintSheet(after) }, icon('wrench'), t('pwMaint'))),
+      noApp.length ? h('button', { type: 'button', class: 'link small', onclick: () => msgQueue(noApp.map((p) => ({ p, text: `${state.business.name}: ${powerText(recent.kind, recent.meta)}` })), t('pwTitle')) }, t('pwSendWa', { n: noApp.length })) : null);
+  }
+
+  function reqLabel(r, p) {
+    if (r.kind === 'no_power') return t('rqNoPower');
+    if (r.kind === 'amps') return t('rqAmpsTo', { from: p ? p.amps : '?', to: r.amps });
+    return t('rqOther');
+  }
+
+  async function replyRequests(ids, reply, after, msg) {
+    const { error } = await sb.rpc('reply_requests', { p_ids: ids, p_reply: reply });
+    if (error) throw error;
+    toast(msg, 'good');
+    after();
+  }
+
+  function outageCards(reqs, after) {
+    const outs = reqs.filter((r) => r.kind === 'no_power');
+    if (!outs.length) return null;
+    const groups = new Map();
+    for (const r of outs) {
+      const p = state.people.find((x) => x.id === r.subscriber_id);
+      const b = (p && p.info.building) || t('noBuilding');
+      if (!groups.has(b)) groups.set(b, []);
+      groups.get(b).push({ r, p });
+    }
+    const list = [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+    const act = (ids, reply, label, cls, msg) => {
+      const btn = h('button', { type: 'button', class: `btn small ${cls}` }, label);
+      btn.addEventListener('click', async () => { busy(btn, true); try { await replyRequests(ids, reply, after, msg); } catch (e) { fail(e); busy(btn, false); } });
+      return btn;
+    };
+    return h('section', { class: 'card flush outage-card', id: 'outage-card' },
+      h('h3', { class: 'card-title' }, t('outTitle'), h('span', { class: 'badge bad' }, outs.length)),
+      list.map(([b, xs]) => {
+        const ids = xs.map((x) => x.r.id);
+        const acked = xs.every((x) => x.r.reply === 'onit');
+        return h('div', { class: 'outage' },
+          h('div', { class: 'row between' }, h('strong', null, b), h('span', { class: 'pill unpaid' }, t('outReports', { n: xs.length }))),
+          xs.length >= 2 ? h('small', { class: 'bad' }, t('outLikely')) : null,
+          h('small', { class: 'muted' }, [xs.map((x) => (x.p ? x.p.title : '—')).join(sep()), timeLabel(xs[0].r.created_at)].join(sep())),
+          acked ? h('small', { class: 'ok' }, `✓ ${t('outAcked')}`) : null,
+          h('div', { class: 'row' },
+            acked ? null : act(ids, 'onit', t('outOnIt'), 'ghost', t('outToldN', { n: ids.length })),
+            act(ids, 'fixed', t('outFixed'), 'primary', t('outFixedN', { n: ids.length }))));
+      }));
+  }
+
+  function requestCards(reqs, after) {
+    const rest = reqs.filter((r) => r.kind !== 'no_power');
+    if (!rest.length) return null;
+    const rows = rest.map((r) => {
+      const p = state.people.find((x) => x.id === r.subscriber_id);
+      const note = h('small', { class: 'muted pre' });
+      if (r.note && p && p.sk) V.dec(p.sk, r.note).then((o) => { if (o && o.t) note.textContent = o.t; }).catch(() => {});
+      const yes = h('button', { type: 'button', class: 'btn primary small' }, r.kind === 'amps' ? t('rqApply') : t('rqDone'));
+      yes.addEventListener('click', async () => {
+        busy(yes, true);
+        try {
+          if (r.kind === 'amps' && p) {
+            const { error } = await sb.from('subscribers').update({ amps: r.amps }).eq('id', p.id);
+            if (error) throw error;
+          }
+          await replyRequests([r.id], 'done', after, r.kind === 'amps' ? t('rqApplied', { name: p ? p.title : '', n: r.amps }) : t('saved'));
+        } catch (e) { fail(e); busy(yes, false); }
+      });
+      const no = h('button', { type: 'button', class: 'link bad', onclick: async () => {
+        try { await replyRequests([r.id], 'no', after, t('rqDeclined')); } catch (e) { fail(e); }
+      } }, t('reject'));
+      return h('div', { class: 'item static' }, avatar(p ? p.title : '—'),
+        h('div', { class: 'grow' }, h('strong', null, p ? p.title : '—'), h('small', null, reqLabel(r, p)), note,
+          p && p.info.phone ? h('a', { class: 'link small', href: `tel:+${intlPhone(p.info.phone)}` }, icon('phone'), ltr(p.info.phone)) : null),
+        h('div', { class: 'end-col' }, h('span', { class: 'row' }, no, yes)));
+    });
+    return h('section', { class: 'card flush', id: 'subreq-card' }, h('h3', { class: 'card-title' }, t('rqTitle'), h('span', { class: 'badge' }, rest.length)), rows);
+  }
+
+  function subRequestSheet(s, after) {
+    const send = async (kind, amps, note, btn) => {
+      busy(btn, true);
+      try {
+        const enc = note && s.sk ? await V.enc(s.sk, { t: note }) : null;
+        const { error } = await sb.rpc('send_request', { p_sub: s.id, p_kind: kind, p_amps: amps || null, p_note: enc });
+        if (error) throw error;
+        close();
+        toast(t('rqSent', { biz: s.business.name }), 'good');
+        after();
+      } catch (e) {
+        if (/too_many/.test((e && e.message) || '')) toast(t('rqTooMany'), 'warn'); else fail(e);
+        busy(btn, false);
+      }
+    };
+    const body = h('div', { class: 'stack' });
+    const close = sheet(t('rqAsk'), body);
+    const choices = () => {
+      const noPower = h('button', { type: 'button', class: 'choice' }, h('span', { class: 'choice-ic bad' }, icon('power')),
+        h('span', { class: 'grow' }, h('strong', null, t('rqNoPowerBtn')), h('small', { class: 'muted' }, t('rqNoPowerSub'))));
+      noPower.addEventListener('click', () => send('no_power', null, null, noPower));
+      body.replaceChildren(
+        noPower,
+        h('button', { type: 'button', class: 'choice', onclick: ampsStep }, h('span', { class: 'choice-ic' }, icon('gauge')),
+          h('span', { class: 'grow' }, h('strong', null, t('rqAmpsBtn')), h('small', { class: 'muted' }, t('rqAmpsSub', { n: s.amps })))),
+        h('button', { type: 'button', class: 'choice', onclick: otherStep }, h('span', { class: 'choice-ic' }, icon('chat')),
+          h('span', { class: 'grow' }, h('strong', null, t('rqOtherBtn')), h('small', { class: 'muted' }, t('rqOtherSub')))));
+    };
+    const ampsStep = () => {
+      let val = Number(s.amps) || 5;
+      const opts = [2, 3, 5, 6, 10, 15, 20, 25, 30, 40, 50, 60];
+      const go2 = h('button', { type: 'button', class: 'btn primary block' }, t('rqSend'));
+      const chips = h('div', { class: 'chips wrap' });
+      const draw = () => chips.replaceChildren(...opts.map((n) => h('button', { type: 'button', class: n === val ? 'chip on' : 'chip', onclick: () => { val = n; draw(); } }, `${n}A`)));
+      draw();
+      go2.addEventListener('click', () => { if (val === Number(s.amps)) return toast(t('rqSameAmps'), 'warn'); send('amps', val, null, go2); });
+      body.replaceChildren(h('p', { class: 'muted' }, t('rqAmpsNow', { n: s.amps })), chips, go2, h('button', { type: 'button', class: 'btn ghost block', onclick: choices }, t('back')));
+    };
+    const otherStep = () => {
+      const txt = h('textarea', { name: 'note', maxlength: 500, rows: 4, placeholder: t('rqOtherHint') });
+      const go2 = h('button', { type: 'button', class: 'btn primary block' }, t('rqSend'));
+      go2.addEventListener('click', () => { const v = clean(txt.value, 500); if (!v) return toast(t('required'), 'bad'); send('other', null, v, go2); });
+      body.replaceChildren(field(t('message'), txt), go2, h('button', { type: 'button', class: 'btn ghost block', onclick: choices }, t('back')));
+      setTimeout(() => txt.focus(), 200);
+    };
+    choices();
+  }
+
+  function subRequestLines(list) {
+    return list.map((r) => {
+      const state2 = r.reply === 'onit' ? t('rqOnIt') : r.reply === 'fixed' ? t('rqFixed') : r.reply === 'no' ? t('rqNo') : r.status === 'done' ? t('rqDoneSub') : t('rqWaiting');
+      const what = r.kind === 'no_power' ? t('rqNoPowerBtn') : r.kind === 'amps' ? t('rqAmpsShort', { n: r.amps }) : t('rqOtherBtn');
+      return h('div', { class: 'old-row' }, h('span', null, what), h('strong', null, state2));
+    });
+  }
+
+  function upkeepRows(up, biz) {
+    const out = [];
+    if (!up) return out;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const days = (d) => Math.round((today - new Date(`${String(d).slice(0, 10)}T00:00:00`)) / 86400000);
+    const every = Number(biz.oil_days) || 15;
+    if (up.last_oil && days(up.last_oil) >= every) out.push({ kind: 'oil', title: t('upOil'), sub: t('upOilSub', { n: days(up.last_oil) }) });
+    const d = (up.diesel || []).map((x) => ({ day: String(x.day).slice(0, 10), liters: Number(x.liters) })).filter((x) => x.liters > 0);
+    if (d.length >= 2) {
+      const span = days(d[0].day) - days(d[d.length - 1].day);
+      const used = d.slice(0, -1).reduce((a, x) => a + x.liters, 0);
+      if (span > 0 && used > 0) {
+        const perDay = used / span;
+        const last = d[d.length - 1];
+        const left = Math.round(last.liters / perDay - days(last.day));
+        if (left <= 2) out.push({ kind: 'diesel', title: left >= 0 ? t('upDiesel', { n: Math.max(left, 0) }) : t('upDieselLate'), sub: t('upDieselSub', { l: Math.round(perDay) }) });
+      }
+    }
+    return out;
+  }
+
+  function oilSheet(after) {
+    const amount = input('amount', { type: 'number', step: '0.01', min: '0', inputmode: 'decimal' });
+    const save = h('button', { type: 'submit', class: 'btn primary block' }, t('upOilDone'));
+    const close = sheet(t('cost_oil'), h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
+      e.preventDefault();
+      const a = Math.round(num(amount.value) * 100) / 100;
+      if (!(a > 0)) return toast(t('required'), 'bad');
+      busy(save, true);
+      try {
+        const { error } = await sb.from('expenses').insert({ business_id: state.business.id, kind: 'oil', amount: a, day: new Date().toISOString().slice(0, 10) });
+        if (error) throw error;
+        close(); toast(t('saved'), 'good'); after();
+      } catch (err) { fail(err); } finally { busy(save, false); }
+    } }, h('p', { class: 'muted' }, t('upOilBody')), field(t('amount'), amount), save));
+    setTimeout(() => amount.focus(), 250);
+  }
+
+  function loadInfo(extra) {
+    const used = state.people.filter((p) => p.active && p.status !== 'pending' && !p.cut_at).reduce((a, p) => a + Number(p.amps || 0), 0) + (extra || 0);
+    const cap = Number(state.business.capacity_amps) || 0;
+    return { used, cap, pct: cap ? used / cap : 0 };
+  }
+
+  async function statementSheet(p) {
+    const biz = state.business;
+    const body = h('div', { class: 'stack' }, h('div', { class: 'skeleton' }));
+    sheet(`${t('statement')}${sep()}${p.title}`, body);
+    try {
+      const { data, error } = await sb.from('bills').select(`*, payments(${PAY})`).eq('subscriber_id', p.id).order('month', { ascending: false }).limit(24);
+      if (error) throw error;
+      const bills = data.slice().sort((a, b) => a.month.localeCompare(b.month));
+      const lines = [];
+      let billed = 0; let paid = 0;
+      for (const b of bills) {
+        billed += Number(b.amount);
+        lines.push([monthLabel(b.month), `${t('stBill')} ${money(b.amount)}`]);
+        for (const x of (b.payments || []).slice().sort((a, c) => a.paid_at.localeCompare(c.paid_at))) {
+          paid += Number(x.amount);
+          lines.push([`   ${dateLabel(x.paid_at)}`, `${t('stPaid')} ${payText(x)}`]);
+        }
+      }
+      const bal = Math.round((billed - paid) * 100) / 100;
+      const all = lines.concat([[t('stBilled'), money(billed)], [t('stPaidTotal'), money(paid)], [t('stBalance'), money(bal)]]);
+      const text = [biz.name, `${t('statement')}: ${p.info.name || p.title}`, ...all.map(([k, v]) => `${k.trim()}: ${v}`)].join('\n');
+      body.replaceChildren(
+        h('div', { class: 'summary' }, h('div', { class: 'row between' }, h('span', null, t('stBalance')), h('strong', { class: `amount ${bal > 0 ? 'bad' : 'ok'}` }, money(bal)))),
+        bills.length ? h('div', { class: 'receipt statement' }, lines.map(([k, v]) => h('div', { class: `row between ${k.startsWith('   ') ? 'sub' : ''}` }, h('span', { class: 'muted' }, k.trim()), h('strong', null, v))))
+          : h('p', { class: 'muted' }, t('noSubscriptionBills')),
+        h('div', { class: 'actions three' },
+          p.info.phone ? h('button', { type: 'button', class: `act ${p.sms ? '' : 'wa'}`, onclick: () => sendTo(p, text, !!p.sms) }, icon(p.sms ? 'send' : 'chat'), h('span', null, p.sms ? 'SMS' : 'WhatsApp')) : null,
+          h('button', { type: 'button', class: 'act', onclick: (e) => { const btn = e.currentTarget; busy(btn, true); receiptImage(biz.name, `${t('statement')}: ${p.info.name || p.title}`, all).then((img) => shareFile(`statement-${digits(p.info.phone) || 'ishtirak'}.pdf`, makePdf(img.jpeg, img.w, img.h), 'application/pdf')).catch(fail).finally(() => busy(btn, false)); } }, icon('bills'), h('span', null, 'PDF')),
+          h('button', { type: 'button', class: 'act', onclick: () => shareText(text) }, icon('send'), h('span', null, t('share')))));
+    } catch (e) { fail(e); body.replaceChildren(h('p', { class: 'muted' }, t('error'))); }
+  }
+
   async function unzip(buf) {
     const u = new Uint8Array(buf);
     const dv = new DataView(u.buffer, u.byteOffset, u.byteLength);
@@ -3086,7 +3685,16 @@
             stat(t('kwhTotal'), String(Math.round(kwh))),
             breakEven !== null ? stat(t('breakEven'), `${money(breakEven)}/kWh`) : null,
             withMargin !== null ? stat(t('withMargin'), `${money(withMargin)}/kWh`, 'ok') : null),
-          kwh > 0 && costs > 0 ? h('p', { class: 'muted small' }, t('priceAdvice')) : null),
+          kwh > 0 && costs > 0 ? h('p', { class: 'muted small' }, t('priceAdvice')) : null,
+          h('section', { class: 'card stack tight' },
+            h('strong', null, t('oilEvery')),
+            h('small', { class: 'muted' }, t('oilEveryHint')),
+            h('div', { class: 'chips wrap' }, [7, 10, 15, 20, 30, 45].map((n) => h('button', { type: 'button', class: Number(biz.oil_days || 15) === n ? 'chip on' : 'chip', onclick: async () => {
+              const { data, error } = await sb.from('businesses').update({ oil_days: n }).eq('id', biz.id).select().single();
+              if (error) return fail(error);
+              state.business = state.ownBusiness = data;
+              toast(t('saved'), 'good'); again();
+            } }, t('daysN', { n })))))),
         h('div', { class: 'stack' },
           h('form', { class: 'card stack', novalidate: true, onsubmit: async (e) => {
             e.preventDefault();
@@ -3209,7 +3817,9 @@
   function todayCard(x) {
     const go2 = (label, fn, sub) => ({ label, fn, sub });
     let a = null;
-    if (x.pending) a = go2(t('todayJoin', { n: x.pending }), () => requestSheet(x.pendingList[0], viewHome));
+    if (x.outages) a = go2(t('todayOutage', { n: x.outages }), () => document.getElementById('outage-card')?.scrollIntoView({ behavior: 'smooth' }));
+    else if (x.subReqs) a = go2(t('todayReqs', { n: x.subReqs }), () => document.getElementById('subreq-card')?.scrollIntoView({ behavior: 'smooth' }));
+    else if (x.pending) a = go2(t('todayJoin', { n: x.pending }), () => requestSheet(x.pendingList[0], viewHome));
     else if (x.payClaims) a = go2(t('todayClaims', { n: x.payClaims }), () => document.getElementById('claims-card')?.scrollIntoView({ behavior: 'smooth' }));
     else if (x.readClaims) a = go2(t('todayReadClaims', { n: x.readClaims }), () => document.getElementById('rclaims-card')?.scrollIntoView({ behavior: 'smooth' }));
     else if (!x.tariff) a = go2(t('todayPrices'), x.setPrices);
@@ -3269,16 +3879,22 @@
       save));
   }
 
-  function readingSheet(s, after) {
+  function readingSheet(s, after, hint) {
     const m = monthDate(currentMonth());
     const value = input('value', { type: 'number', step: '0.01', min: '0', inputmode: 'decimal' });
     let photoBytes = null;
-    const camBtn = h('button', { type: 'button', class: 'btn ghost block' }, icon('camera'), t('photoTake'));
+    const camBtn = h('button', { type: 'button', class: 'btn primary block' }, icon('camera'), t('scanTitle'));
     camBtn.addEventListener('click', async () => {
-      const file = await pickPhoto();
-      if (!file) return;
+      const res = await scanMeter(t('sendReading'), hint || null);
+      if (!res) return;
+      if (res.value !== null && res.value !== undefined) {
+        value.value = String(res.value);
+        value.classList.add('scanned');
+        toast(res.plausible ? t('scanGot', { v: res.value }) : t('scanCheck', { v: res.value }), res.plausible ? 'good' : 'warn');
+      } else toast(t('scanFailed'), 'warn');
+      if (!res.file) return;
       busy(camBtn, true);
-      try { photoBytes = await shrinkPhoto(file); camBtn.classList.add('has'); camBtn.lastChild.textContent = t('photoReady'); } catch (e) { fail(e); } finally { busy(camBtn, false); }
+      try { photoBytes = await shrinkPhoto(res.file); camBtn.classList.add('has'); camBtn.lastChild.textContent = t('photoReady'); } catch (e) { fail(e); } finally { busy(camBtn, false); }
     });
     const save = h('button', { type: 'submit', class: 'btn primary block' }, t('sendToOwner'));
     const close = sheet(t('sendReading'), h('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
@@ -3300,10 +3916,9 @@
       } finally { busy(save, false); }
     } },
       h('p', { class: 'muted' }, t('sendReadingBody', { month: monthLabel(m) })),
-      field(t('currentReading'), value),
       camBtn,
+      field(t('currentReading'), value, t('scanEdit')),
       save));
-    setTimeout(() => value.focus(), 250);
   }
 
   function makePdf(jpeg, w, hgt) {
@@ -3569,7 +4184,9 @@
       if (!validPhone(d.phone)) return toast(t('phoneRequired'), 'bad');
       busy(save, true);
       try {
-        const { data, error } = await sb.from('businesses').update({ name: clean(d.name, 120), phone: clean(d.phone, 30), area: clean(d.area, 120) || null, lbp_rate: rate }).eq('id', biz.id).select().single();
+        const cap = d.capacity_amps === '' ? null : Math.round(num(d.capacity_amps));
+        if (cap !== null && !(cap >= 1 && cap <= 100000)) return toast(t('required'), 'bad');
+        const { data, error } = await sb.from('businesses').update({ name: clean(d.name, 120), phone: clean(d.phone, 30), area: clean(d.area, 120) || null, lbp_rate: rate, capacity_amps: cap }).eq('id', biz.id).select().single();
         if (error) throw error;
         state.ownBusiness = data; state.business = data; close(); toast(t('saved'), 'good'); viewMore();
       } catch (err) { fail(err); } finally { busy(save, false); }
@@ -3578,6 +4195,7 @@
       field(t('phone'), input('phone', { type: 'tel', required: true, maxlength: 30, value: biz.phone || '', inputmode: 'tel' })),
       field(t('area'), input('area', { maxlength: 120, value: biz.area || '' })),
       field(t('lbpRate'), input('lbp_rate', { type: 'number', step: '1', min: '1', value: biz.lbp_rate, inputmode: 'decimal' })),
+      field(t('capacity'), input('capacity_amps', { type: 'number', step: '1', min: '1', value: biz.capacity_amps || '', inputmode: 'numeric', placeholder: '250' }), t('capacityHint', { n: loadInfo().used })),
       save));
   }
 
@@ -3667,8 +4285,6 @@
     }).catch(() => {});
   }
 
-  // iPhone Home Screen apps can start with a viewport shorter than the screen, which lifts
-  // bottom-anchored bars. Anchor them to the real screen height instead.
   function fixViewport() {
     const root = document.documentElement;
     if (isNative || !isIOS() || !standalone()) return;

@@ -17,7 +17,12 @@ const T = {
     reading: () => 'A subscriber sent their meter reading. Open the app to approve it.',
     late: (p: any) => `You owe ${usd(p.amount)}` + (Number(p.months) > 1 ? ` for ${p.months} months` : '') + '. Please pay soon to avoid a cut.',
     cut: () => 'Your subscription is cut for unpaid bills. Pay to get reconnected.',
-    back: () => 'Your subscription is reconnected. Thank you!'
+    back: () => 'Your subscription is reconnected. Thank you!',
+    request: (p: any) => p.kind === 'no_power' ? 'A subscriber reports no power. Open the app to see who.' : p.kind === 'amps' ? `A subscriber asks to change to ${Number(p.amps)}A. Open the app to answer.` : 'A subscriber sent you a request. Open the app to see it.',
+    reply: (p: any) => p.reply === 'onit' ? 'We got your report and we are working on it.' : p.reply === 'fixed' ? 'The problem is fixed. Power should be back.' : p.reply === 'no' ? 'Your request was declined. Call us for details.' : p.kind === 'amps' ? `Done: your subscription is now ${Number(p.amps)}A.` : 'Your request is done.',
+    off: () => 'The generator is off now.',
+    on: () => 'Power is back.',
+    maint: (m: any) => `Maintenance: the generator will be off${m && m.from ? ` from ${String(m.from).slice(0, 10)}` : ''}${m && m.to ? ` to ${String(m.to).slice(0, 10)}` : ''}.`
   },
   ar: {
     bill: (p: any) => `فاتورة ${month(p.month, 'ar')} جاهزة: ${usd(p.amount)}`,
@@ -28,7 +33,12 @@ const T = {
     reading: () => 'مشترك بعت قراءة العداد. افتح التطبيق لتوافق عليها.',
     late: (p: any) => `عليك ${usd(p.amount)}` + (Number(p.months) > 1 ? ` عن ${p.months} أشهر` : '') + '. الرجاء الدفع بأقرب وقت لتجنّب القطع.',
     cut: () => 'انقطع اشتراكك بسبب فواتير غير مدفوعة. ادفع لترجع الكهرباء.',
-    back: () => 'رجع اشتراكك. شكراً!'
+    back: () => 'رجع اشتراكك. شكراً!',
+    request: (p: any) => p.kind === 'no_power' ? 'مشترك بيقول ما في كهرباء عندو. افتح التطبيق لتشوف مين.' : p.kind === 'amps' ? `مشترك بدّو يغيّر لـ ${Number(p.amps)} أمبير. افتح التطبيق لتردّ.` : 'مشترك بعتلك طلب. افتح التطبيق لتشوفو.',
+    reply: (p: any) => p.reply === 'onit' ? 'وصلنا بلاغك وعم نشتغل عليه.' : p.reply === 'fixed' ? 'انحلّت المشكلة. لازم ترجع الكهرباء.' : p.reply === 'no' ? 'ما قدرنا نوافق على طلبك. اتصل فينا للتفاصيل.' : p.kind === 'amps' ? `تمّ: صار اشتراكك ${Number(p.amps)} أمبير.` : 'تمّ طلبك.',
+    off: () => 'الموتور طافي هلّق.',
+    on: () => 'رجعت الكهرباء.',
+    maint: (m: any) => `صيانة: الموتور رح يطفى${m && m.from ? ` من ${String(m.from).slice(0, 10)}` : ''}${m && m.to ? ` لـ ${String(m.to).slice(0, 10)}` : ''}.`
   }
 };
 
@@ -44,10 +54,11 @@ function message(r: Row) {
   const p = r.payload || {};
   const t = (T as any)[lang];
   let title = r.biz, body = '';
-  if (p.t === 'notice') { title = `${r.biz}: ${p.title}`; body = p.body || ''; }
+  if (p.t === 'notice' && p.kind && t[p.kind]) { title = r.biz; body = t[p.kind](p.meta || {}); }
+  else if (p.t === 'notice') { title = `${r.biz}: ${p.title}`; body = p.body || ''; }
   else if (t[p.t]) body = t[p.t](p);
   else return null;
-  return { title: title.slice(0, 120), body: body.slice(0, 300), tag: `${p.t}-${p.month || ''}`, url: './' };
+  return { title: title.slice(0, 120), body: body.slice(0, 300), tag: p.t === 'notice' && p.kind ? 'power' : `${p.t}-${p.month || ''}`, url: './' };
 }
 
 let fcmToken: { token: string; exp: number } | null = null;

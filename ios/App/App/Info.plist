@@ -2,6 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Ishtirak uses the camera to photograph meters and read the number on them.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Ishtirak uses the microphone when you say meter readings out loud.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Ishtirak turns the meter readings you say into numbers.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Ishtirak lets you pick a meter photo from your library.</string>
     <key>CAPACITOR_DEBUG</key>
 	<string>$(CAPACITOR_DEBUG)</string>
 	<key>CFBundleDevelopmentRegion</key>

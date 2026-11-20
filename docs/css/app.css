@@ -519,3 +519,53 @@ html.big #dock .tab span { font-size: 13px; }
 .btn.sms { background: var(--ink); color: var(--bg); }
 .center-link { align-self: center; display: block; margin: -4px auto 0; }
 .official-last { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; } .official-last:empty { display: none; }
+.scan { position: fixed; inset: 0; z-index: 40; background: #000; color: #fff; overflow: hidden; }
+.scan-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.scan-frame { position: absolute; left: 50%; top: 42%; width: min(86vw, 520px); aspect-ratio: 3.4 / 1; transform: translate(-50%, -50%); border-radius: 14px; box-shadow: 0 0 0 200vmax rgb(0 0 0 / .55); outline: 3px solid var(--amber); outline-offset: 0; }
+.scan-top { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 12px; padding: calc(12px + env(safe-area-inset-top)) 16px 12px; background: linear-gradient(rgb(0 0 0 / .6), transparent); }
+.scan-top strong { flex: 1; font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scan-icon { width: 44px; height: 44px; border-radius: 999px; border: 0; background: rgb(255 255 255 / .16); color: #fff; font-size: 26px; line-height: 1; display: grid; place-items: center; flex: none; }
+.scan-icon.on { background: var(--amber); color: var(--amber-ink); }
+.scan-icon .ic { width: 22px; height: 22px; }
+.scan-status { position: absolute; left: 16px; right: 16px; top: calc(42% + min(86vw, 520px) / 6.8 + 22px); text-align: center; font-size: 15px; line-height: 1.5; text-shadow: 0 1px 4px rgb(0 0 0 / .8); margin: 0; }
+.scan-bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 20px calc(22px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, rgb(0 0 0 / .7)); }
+.scan-side { flex: 1; min-width: 0; border: 0; background: none; color: #fff; font: inherit; font-size: 14px; text-align: start; padding: 10px 0; }
+.scan-side:last-child { text-align: end; }
+.scan-shot { width: 76px; height: 76px; border-radius: 999px; border: 5px solid #fff; background: var(--amber); flex: none; box-shadow: 0 4px 18px rgb(0 0 0 / .5); transition: transform .12s var(--ease); }
+.scan-shot:active { transform: scale(.92); }
+.scan-shot.loading { background: #777; }
+input.scanned { box-shadow: inset 0 0 0 2px var(--amber); }
+.voice-btn.on { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+.voice-bar { position: sticky; top: calc(8px + env(safe-area-inset-top)); z-index: 4; display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: var(--r); background: var(--night); color: #f2f5f8; font-weight: 500; box-shadow: var(--shadow); }
+.voice-dot { width: 10px; height: 10px; border-radius: 999px; background: #ff5a5f; flex: none; animation: pulse 1.2s infinite; }
+@keyframes pulse { 50% { opacity: .35; transform: scale(.8); } }
+.item.listening { background: var(--amber-soft); box-shadow: inset 4px 0 0 var(--amber); }
+.power-card { display: flex; flex-direction: column; gap: 12px; }
+.power-card.off { box-shadow: inset 0 0 0 2px var(--bad), var(--shadow); }
+.power-btns { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 8px; }
+.power-btns .btn { flex-direction: column; gap: 4px; min-height: 66px; padding: 8px 4px; font-size: 13.5px; line-height: 1.2; white-space: normal; text-align: center; }
+.power-btns .btn .ic { width: 22px; height: 22px; }
+.power-banner { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: var(--r-lg); background: var(--sunk); grid-column: 1 / -1; }
+.power-banner > .grow { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.power-banner small { opacity: .8; }
+.power-banner.off { background: var(--bad-soft); color: var(--bad); }
+.power-banner.on { background: var(--good-soft); color: var(--good); }
+.power-banner.maint { background: var(--warn-soft); color: var(--warn); }
+.power-banner .row-ic { background: rgb(255 255 255 / .5); color: inherit; }
+.outage { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-top: 1px solid var(--line); }
+.outage .row { gap: 8px; margin-top: 4px; }
+.badge.bad { background: var(--bad); }
+.row-ic.warn { background: var(--warn-soft); color: var(--warn); }
+.load-line { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 14px; border-radius: var(--r); background: var(--sunk); color: var(--ink); font: inherit; font-size: 14px; border: 0; text-align: start; }
+.load-line > .grow { display: flex; flex-direction: column; gap: 6px; }
+.load-line .ic { width: 20px; height: 20px; flex: none; color: var(--muted); }
+.load-line.warn { background: var(--warn-soft); color: var(--warn); }
+.load-line.bad { background: var(--bad-soft); color: var(--bad); }
+.load-line.bad .bar i { background: var(--bad); }
+.pay-calc:empty { display: none; }
+.pay-calc { padding: 10px 14px; border-radius: var(--r); background: var(--sunk); font-size: 14.5px; }
+.pay-calc .change { color: var(--warn); }
+.handover .amount.big { font-size: 26px; }
+.receipt.statement .row.sub { padding-inline-start: 14px; font-size: 14px; }
+.receipt.statement { max-height: 46vh; overflow-y: auto; }
+@media (prefers-reduced-motion: reduce) { .voice-dot { animation: none; } }
