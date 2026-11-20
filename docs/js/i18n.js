@@ -357,7 +357,8 @@ window.I18N = {
     rcRate: "Dollar rate: {r} LBP",
     rcThanks: "Thank you",
     rcSendImage: "Send receipt",
-    rcText: "Text"
+    rcText: "Text",
+    waMissing: "WhatsApp didn't open. Check that it is installed on this phone."
   },
   ar: {
     app: "اشتراك",
@@ -1024,6 +1025,7 @@ window.I18N = {
     rcRate: "سعر الصرف: {r} ل.ل.",
     rcThanks: "شكراً لكم",
     rcSendImage: "إرسال الإيصال",
-    rcText: "نص"
+    rcText: "نص",
+    waMissing: "لم يُفتح واتساب. تأكّد من أنه مثبّت على هذا الهاتف."
   }
 };

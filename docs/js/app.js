@@ -214,12 +214,28 @@
   }
 
   function smsLink(phone, text) { return `sms:+${intlPhone(phone)}?&body=${encodeURIComponent(text)}`; }
+  function isPhone() { return isIOS() || /Android/i.test(navigator.userAgent); }
+  function clickLink(url) {
+    const a = h('a', { href: url, rel: 'noopener' });
+    document.body.append(a); a.click(); a.remove();
+  }
   function openExternal(url) {
-    if (isNative || url.startsWith('sms:')) {
-      const a = h('a', { href: url, rel: 'noopener' });
-      document.body.append(a); a.click(); a.remove();
+    const wa = url.match(/^https:\/\/wa\.me\/(\d*)\?text=(.*)$/);
+    if (wa && (isNative || isPhone())) {
+      const app = `whatsapp://send?${wa[1] ? `phone=${wa[1]}&` : ''}text=${wa[2]}`;
+      let left = false;
+      const away = () => { left = true; };
+      document.addEventListener('visibilitychange', away, { once: true });
+      window.addEventListener('pagehide', away, { once: true });
+      clickLink(app);
+      setTimeout(() => {
+        document.removeEventListener('visibilitychange', away);
+        window.removeEventListener('pagehide', away);
+        if (!left && document.visibilityState === 'visible') toast(t('waMissing'), 'warn');
+      }, 2500);
       return;
     }
+    if (isNative || url.startsWith('sms:')) return clickLink(url);
     window.open(url, '_blank', 'noopener,noreferrer');
   }
   function sendTo(p, text, viaSms) {
