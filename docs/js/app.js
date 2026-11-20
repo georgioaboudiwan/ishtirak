@@ -1196,13 +1196,21 @@
       else if (x.uPart + x.lUsd > 0 && x.still > 0.004) rows.push(h('div', { class: 'row between' }, h('span', null, t('stillOwedAfter')), h('strong', { class: 'bad' }, money(x.still))));
       else if (x.uPart + x.lUsd > 0) rows.push(h('div', { class: 'row between' }, h('span', null, t('coversBill')), h('strong', { class: 'ok' }, '✓')));
       calc.replaceChildren(...rows);
+      markChips();
     };
-    drawCalc();
     usdIn.addEventListener('input', drawCalc);
     lbpIn.addEventListener('input', drawCalc);
-    const quick = h('div', { class: 'chips' },
-      h('button', { type: 'button', class: 'chip', onclick: () => { usdIn.value = rem.toFixed(2); lbpIn.value = ''; drawCalc(); } }, t('allUsd')),
-      rate > 0 ? h('button', { type: 'button', class: 'chip', onclick: () => { usdIn.value = ''; lbpIn.value = String(fullLbp); drawCalc(); } }, t('allLbp', { v: lbpText(fullLbp) })) : null);
+    const usdChip = h('button', { type: 'button', class: 'chip', 'aria-pressed': 'false', onclick: () => { usdIn.value = rem.toFixed(2); lbpIn.value = ''; drawCalc(); } }, icon('check'), t('allUsd'));
+    const lbpChip = rate > 0 ? h('button', { type: 'button', class: 'chip', 'aria-pressed': 'false', onclick: () => { usdIn.value = ''; lbpIn.value = String(fullLbp); drawCalc(); } }, icon('check'), t('allLbp', { v: lbpText(fullLbp) })) : null;
+    const quick = h('div', { class: 'chips pay-chips' }, usdChip, lbpChip);
+    const markChips = () => {
+      const u = num(usdIn.value || 0); const l = num(lbpIn.value || 0);
+      const onU = Math.abs(u - rem) < 0.005 && !l;
+      const onL = !!lbpChip && Math.abs(l - fullLbp) < 1 && !u;
+      usdChip.classList.toggle('on', onU); usdChip.setAttribute('aria-pressed', String(onU));
+      if (lbpChip) { lbpChip.classList.toggle('on', onL); lbpChip.setAttribute('aria-pressed', String(onL)); }
+    };
+    drawCalc();
     const note = input('note', { maxlength: 120 });
     const save = h('button', { type: 'submit', class: 'btn primary block' }, t('recordPayment'));
     let close = () => {};
@@ -1266,6 +1274,127 @@
 
   function receiptNo(pay) { return String(pay.id).replace(/-/g, '').slice(0, 8).toUpperCase(); }
 
+  async function receiptDoc(b, pay, p, remAfter) {
+    try { await Promise.all(['400', '500', '700'].map((w) => document.fonts.load(`${w} 20px "IBM Plex Sans Arabic"`))); } catch {}
+    const biz = state.business;
+    const rate = Number(pay.lbp_rate || biz.lbp_rate) || 0;
+    const rtl = state.lang === 'ar';
+    const info = (p && p.info) || {};
+    const metered = b.billing_type === 'metered';
+    const old = debtBefore(b.subscriber_id, b.month);
+    const rem = Math.max(0, Math.round(remAfter * 100) / 100);
+    const W = 820; const pad = 48; const inner = W - pad * 2;
+    const font = (wt, px) => `${wt} ${px}px "IBM Plex Sans Arabic", "Segoe UI", Tahoma, sans-serif`;
+    const lbpStr = (v) => `${Math.round(v).toLocaleString('en-US')} ${t('lbpUnit')}`;
+    const infoRows = [
+      [t('customer'), info.name || (p && p.title) || '—'],
+      info.building || info.floor ? [t('building'), [info.building, info.floor ? `${t('floor')} ${info.floor}` : ''].filter(Boolean).join(' · ')] : null,
+      info.phone ? [t('phone'), info.phone] : null,
+      [t('subscription'), `${b.amps} ${t('amps')} · ${typeLabel(b.billing_type)}`],
+      info.meter ? [t('meterNumber'), info.meter] : null,
+      [t('forMonth'), monthLabel(b.month)]
+    ].filter(Boolean);
+    const has = (v) => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
+    const calc = metered ? [
+      has(b.prev_reading) ? [t('rcPrev'), String(Number(b.prev_reading))] : null,
+      has(b.curr_reading) ? [t('rcCurr'), String(Number(b.curr_reading))] : null,
+      [t('rcUse'), `${Number(b.kwh)} kWh`],
+      [t('rcKwhCost', { p: money(b.kwh_price) }), money(Number(b.kwh) * Number(b.kwh_price))],
+      [t('rcFixed', { n: b.amps }), money(b.fixed_fee)]
+    ] : [[t('rcFlat', { n: b.amps, p: money(Number(b.fixed_fee) / Math.max(1, Number(b.amps))) }), money(b.fixed_fee)]];
+    if (Number(b.extra) > 0) calc.push([t('rcExtra'), money(b.extra)]);
+    const rows = calc.filter(Boolean);
+    const totals = [
+      [t('rcBillTotal'), money(b.amount), rate ? lbpStr(Number(b.amount) * rate) : ''],
+      old > 0 ? [t('oldUnpaid'), money(old), ''] : null,
+      [t('amountPaid'), payText(pay), ''],
+      pay.change ? [t('changeGiven'), pay.change, ''] : null,
+      [t('remaining'), money(rem + old), rate && rem + old > 0 ? lbpStr((rem + old) * rate) : '']
+    ].filter(Boolean);
+    const H = 300 + infoRows.length * 44 + 70 + rows.length * 46 + 30 + totals.length * 54 + 210;
+    const k = 2;
+    const c = document.createElement('canvas');
+    c.width = W * k; c.height = H * k;
+    const g = c.getContext('2d');
+    g.scale(k, k);
+    g.direction = rtl ? 'rtl' : 'ltr';
+    const S = rtl ? W - pad : pad; const E = rtl ? pad : W - pad;
+    const txt = (s, x, y, wt, px, color, align) => {
+      let v = String(s);
+      const arabic = /[\u0600-\u06FF]/.test(v);
+      g.direction = arabic && rtl ? 'rtl' : 'ltr';
+      if (arabic) v = v.replace(/[$+#№]?\d[\d\s.,:/$]*\d|\$?\d/g, (m) => `\u2066${m}\u2069`);
+      g.font = font(wt, px); g.fillStyle = color; g.textAlign = align; g.fillText(v, x, y);
+      g.direction = rtl ? 'rtl' : 'ltr';
+    };
+    const start = rtl ? 'right' : 'left'; const end = rtl ? 'left' : 'right';
+    g.fillStyle = '#fffdf8'; g.fillRect(0, 0, W, H);
+    g.strokeStyle = '#1b2430'; g.lineWidth = 3; g.strokeRect(14, 14, W - 28, H - 28);
+    g.lineWidth = 1; g.strokeRect(22, 22, W - 44, H - 44);
+    const lx = rtl ? W - pad - 56 : pad;
+    g.fillStyle = '#ffb21a'; g.beginPath(); g.roundRect(lx, 44, 56, 56, 14); g.fill();
+    g.fillStyle = '#1b1300'; g.beginPath();
+    const bx = lx + 28; const by = 72;
+    g.moveTo(bx + 4, by - 20); g.lineTo(bx - 12, by + 3); g.lineTo(bx - 1, by + 3); g.lineTo(bx - 4, by + 20); g.lineTo(bx + 12, by - 3); g.lineTo(bx + 1, by - 3); g.closePath(); g.fill();
+    const hx = rtl ? W - pad - 72 : pad + 72;
+    txt(biz.name, hx, 70, 700, 30, '#111820', start);
+    txt([biz.phone, biz.area].filter(Boolean).join('  ·  '), hx, 100, 400, 17, '#5d6877', start);
+    txt(t('rcTitle'), E, 66, 700, 24, '#111820', end);
+    txt(`№ ${receiptNo(pay)}`, E, 96, 500, 17, '#5d6877', end);
+    let y = 128;
+    g.fillStyle = '#1b2430'; g.fillRect(pad, y, inner, 3);
+    y += 26;
+    txt(`${t('date')}: ${new Date(pay.paid_at).toLocaleString(loc(), { dateStyle: 'medium', timeStyle: 'short' })}`, S, y + 10, 500, 17, '#333d4a', start);
+    const who = collectorName(pay.collector_id);
+    txt(`${t('method')}: ${t(pay.method)}${who ? `  ·  ${t('collectedBy')}: ${who}` : ''}`, E, y + 10, 500, 17, '#333d4a', end);
+    y += 36;
+    g.strokeStyle = '#c9d1db'; g.lineWidth = 1;
+    g.strokeRect(pad, y, inner, infoRows.length * 44 + 16);
+    y += 8;
+    for (const [kk, vv] of infoRows) {
+      txt(kk, S - (rtl ? 18 : -18), y + 30, 500, 17, '#5d6877', start);
+      txt(vv, rtl ? pad + 18 : W - pad - 18, y + 30, 700, 19, '#111820', end);
+      y += 44;
+    }
+    y += 34;
+    txt(t('rcDetails'), S, y, 700, 18, '#111820', start);
+    y += 14;
+    g.fillStyle = '#f1ede3'; g.fillRect(pad, y, inner, rows.length * 46 + 8);
+    y += 4;
+    for (const [kk, vv] of rows) {
+      txt(kk, S - (rtl ? 18 : -18), y + 30, 500, 18, '#333d4a', start);
+      txt(vv, rtl ? pad + 18 : W - pad - 18, y + 30, 700, 19, '#111820', end);
+      g.strokeStyle = '#ddd5c4'; g.beginPath(); g.moveTo(pad + 12, y + 46); g.lineTo(W - pad - 12, y + 46); g.stroke();
+      y += 46;
+    }
+    y += 30;
+    for (const [kk, vv, sub] of totals) {
+      const last = kk === t('remaining');
+      if (last) { g.fillStyle = rem + old > 0 ? '#fdecec' : '#e7f7ee'; g.fillRect(pad, y - 4, inner, 54); }
+      txt(kk, S - (rtl ? 18 : -18), y + 30, last ? 700 : 500, last ? 21 : 19, '#111820', start);
+      txt(vv, rtl ? pad + 18 : W - pad - 18, y + (sub ? 24 : 30), 700, last ? 23 : 20, last ? (rem + old > 0 ? '#c62828' : '#137a43') : '#111820', end);
+      if (sub) txt(sub, rtl ? pad + 18 : W - pad - 18, y + 46, 400, 14, '#5d6877', end);
+      y += 54;
+    }
+    const full = rem + old <= 0.004;
+    const sx = rtl ? pad + 120 : W - pad - 120; const sy = y + 90;
+    g.save(); g.translate(sx, sy); g.rotate(-0.22);
+    g.strokeStyle = full ? '#1a8a4a' : '#c77700'; g.fillStyle = g.strokeStyle; g.globalAlpha = 0.85;
+    g.lineWidth = 4; g.beginPath(); g.ellipse(0, 0, 100, 56, 0, 0, Math.PI * 2); g.stroke();
+    g.lineWidth = 1.5; g.beginPath(); g.ellipse(0, 0, 90, 47, 0, 0, Math.PI * 2); g.stroke();
+    g.textAlign = 'center'; g.font = font(700, 30); g.fillText(full ? t('rcPaidStamp') : t('rcPartStamp'), 0, 4);
+    g.font = font(600, 14); g.fillText(new Date(pay.paid_at).toLocaleDateString('en-GB'), 0, 30);
+    g.restore();
+    const gx = rtl ? W - pad : pad;
+    g.strokeStyle = '#1b2430'; g.lineWidth = 1; g.beginPath(); g.moveTo(rtl ? gx - 260 : gx, y + 120); g.lineTo(rtl ? gx : gx + 260, y + 120); g.stroke();
+    txt(t('rcSignature'), S, y + 146, 500, 16, '#5d6877', start);
+    if (rate) txt(t('rcRate', { r: Math.round(rate).toLocaleString('en-US') }), S, y + 62, 400, 15, '#5d6877', start);
+    txt(t('rcThanks'), W / 2, H - 52, 700, 18, '#111820', 'center');
+    txt(t('receiptFooter'), W / 2, H - 30, 400, 13, '#8a95a3', 'center');
+    const blob = await new Promise((resolve) => c.toBlob(resolve, 'image/jpeg', 0.92));
+    return { jpeg: new Uint8Array(await blob.arrayBuffer()), w: c.width, h: c.height, blob };
+  }
+
   function receiptSheet(b, pay, p, remAfter) {
     const biz = state.business;
     const name = p ? p.info.name || p.title : '';
@@ -1279,14 +1408,36 @@
     ].filter(Boolean);
     const title = `${t('receipt')} #${receiptNo(pay)}`;
     const text = [biz.name, title, ...lines.map(([k, v]) => `${k}: ${v}`)].join('\n');
+    const file = `receipt-${receiptNo(pay)}`;
+    const preview = h('div', { class: 'receipt-paper' }, h('div', { class: 'skeleton photo' }));
+    const docP = receiptDoc(b, pay, p, remAfter);
+    docP.then((d) => {
+      const url = URL.createObjectURL(d.blob);
+      const img = h('img', { src: url, alt: title });
+      preview.replaceChildren(img);
+    }).catch((e) => { logError(e, 'receiptDoc'); preview.replaceChildren(h('p', { class: 'muted' }, t('error'))); });
+    const withDoc = (fn) => async (e) => { const btn = e.currentTarget; busy(btn, true); try { await fn(await docP); } catch (err) { fail(err); } finally { busy(btn, false); } };
     sheet(t('receipt'), h('div', { class: 'stack' },
-      h('div', { class: 'receipt' },
-        h('strong', { class: 'receipt-biz' }, biz.name), h('small', { class: 'muted' }, title),
-        lines.map(([k, v]) => h('div', { class: 'row between' }, h('span', { class: 'muted' }, k), h('strong', null, v)))),
+      preview,
+      h('button', { type: 'button', class: 'btn primary block', onclick: withDoc((d) => shareFile(`${file}.jpg`, d.jpeg, 'image/jpeg')) }, icon('send'), t('rcSendImage')),
       h('div', { class: 'actions three' },
-        p && p.info.phone ? h('button', { type: 'button', class: `act ${p.sms ? '' : 'wa'}`, onclick: () => sendTo(p, text, !!p.sms) }, icon(p.sms ? 'send' : 'chat'), h('span', null, p.sms ? 'SMS' : 'WhatsApp')) : null,
-        h('button', { type: 'button', class: 'act', onclick: (e) => { const btn = e.currentTarget; busy(btn, true); receiptPdf(biz.name, title, lines, receiptNo(pay)).catch(fail).finally(() => busy(btn, false)); } }, icon('bills'), h('span', null, 'PDF')),
-        h('button', { type: 'button', class: 'act', onclick: () => shareText(text) }, icon('send'), h('span', null, t('share'))))));
+        h('button', { type: 'button', class: 'act', onclick: withDoc((d) => shareFile(`${file}.pdf`, makePdf(d.jpeg, d.w, d.h), 'application/pdf')) }, icon('bills'), h('span', null, 'PDF')),
+        p && p.info.phone ? h('button', { type: 'button', class: `act ${p.sms ? '' : 'wa'}`, onclick: () => sendTo(p, text, !!p.sms) }, icon(p.sms ? 'send' : 'chat'), h('span', null, p.sms ? 'SMS' : t('rcText'))) : null,
+        h('button', { type: 'button', class: 'act', onclick: withDoc((d) => printImage(d.blob)) }, icon('copy'), h('span', null, t('print'))))));
+  }
+
+  function printImage(blob) {
+    const url = URL.createObjectURL(blob);
+    const frame = h('iframe', { class: 'print-frame', title: t('print') });
+    document.body.append(frame);
+    const doc = frame.contentDocument;
+    doc.open();
+    doc.write('<!doctype html><html><head><style>@page{margin:10mm}body{margin:0}img{width:100%}</style></head><body></body></html>');
+    doc.close();
+    const img = doc.createElement('img');
+    img.onload = () => { frame.contentWindow.focus(); frame.contentWindow.print(); setTimeout(() => { frame.remove(); URL.revokeObjectURL(url); }, 2000); };
+    img.src = url;
+    doc.body.append(img);
   }
 
   function sendQueue(bills) {

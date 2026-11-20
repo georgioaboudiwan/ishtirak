@@ -1,5 +1,5 @@
 window.APP_CONFIG = Object.freeze({
-  version: '2.0.0',
+  version: '2.0.1',
   supabaseUrl: 'https://cpqtthvtljbhawhjllbz.supabase.co',
   supabaseKey: 'sb_publishable_FrXwvH49Noed1mLFikuWOw_-NQ2owmM',
   publicUrl: 'https://georgioaboudiwan.github.io/ishtirak/',
