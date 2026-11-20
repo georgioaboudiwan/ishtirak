@@ -1144,7 +1144,7 @@
       busy(quick, true);
       try { const pay = await payBill(b, rem, 'cash'); paymentToast(t('markedPaid', { name }), [pay], after); after(); }
       catch (err) { fail(err); busy(quick, false); }
-    } }, icon('check'), t('markPaid')) : h('span', { class: 'pill paid' }, t('paid'));
+    } }, t('markPaid')) : h('span', { class: 'pill paid' }, t('paid'));
     return h('div', { class: 'item', role: 'button', tabindex: '0', onclick: () => billSheet(b, after).catch(fail) },
       avatar(name),
       h('div', { class: 'grow' }, h('strong', null, name),

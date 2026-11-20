@@ -176,7 +176,8 @@ input[type=checkbox] { appearance: auto; -webkit-appearance: checkbox; width: 22
 .btn.loading { color: transparent !important; position: relative; }
 .btn.loading::after { content: ""; position: absolute; width: 18px; height: 18px; border: 2.5px solid var(--amber-ink); border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
 .btn.ghost.loading::after, .btn.paid-btn.loading::after { border-color: var(--ink); border-right-color: transparent; }
-.paid-btn { min-height: 34px; padding: 4px 12px; font-size: 13px; border-radius: 999px; background: var(--good-soft); color: var(--good); box-shadow: none; }
+.paid-btn { min-height: 34px; padding: 4px 14px; font-size: 13px; border-radius: 10px; background: transparent; color: var(--amber-text); border: 1.5px solid var(--amber); box-shadow: none; }
+.paid-btn:active { background: var(--amber-soft); }
 .paid-btn .ic { width: 16px; height: 16px; stroke-width: 2.6; }
 .icon-btn { width: 40px; height: 40px; border-radius: 12px; border: 0; background: var(--panel); color: var(--ink); font-size: 22px; line-height: 1; display: grid; place-items: center; flex: none; box-shadow: var(--shadow); }
 .link { background: none; border: 0; padding: 8px 0; color: var(--muted); text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 4px; font-size: 14.5px; align-self: center; }
