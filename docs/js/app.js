@@ -187,11 +187,13 @@
   function money(n) { const v = Number(n || 0); return `${v < -0.004 ? '-' : ''}$${Math.abs(v).toFixed(2)}`; }
   function lbp(n, rate) { return Math.round(Number(n || 0) * Number(rate || 0)).toLocaleString('en-US'); }
   function monthDate(m) { return `${m}-01`; }
+  function loc() { return state.lang === 'ar' ? 'ar-LB-u-nu-latn' : 'en-GB'; }
+
   function monthLabel(d) {
     const [y, mo] = String(d).slice(0, 7).split('-').map(Number);
-    return new Date(y, mo - 1, 1).toLocaleDateString(state.lang === 'ar' ? 'ar-LB' : 'en-GB', { month: 'long', year: 'numeric' });
+    return new Date(y, mo - 1, 1).toLocaleDateString(loc(), { month: 'long', year: 'numeric' });
   }
-  function dateLabel(d) { return new Date(d).toLocaleDateString(state.lang === 'ar' ? 'ar-LB' : 'en-GB', { day: 'numeric', month: 'short' }); }
+  function dateLabel(d) { return new Date(d).toLocaleDateString(loc(), { day: 'numeric', month: 'short' }); }
   function num(v) { const n = Number(String(v).replace(',', '.')); return Number.isFinite(n) ? n : NaN; }
   function clean(v, max) { return String(v || '').trim().slice(0, max); }
   function digits(v) { return String(v || '').replace(/\D/g, ''); }
@@ -374,7 +376,7 @@
   function applyLang() {
     document.documentElement.lang = state.lang;
     document.documentElement.dir = state.lang === 'ar' ? 'rtl' : 'ltr';
-    $langs.forEach((b) => { b.textContent = state.lang === 'ar' ? 'English' : 'عربي'; });
+    $langs.forEach((b) => { b.textContent = state.lang === 'ar' ? 'English' : 'العربية'; });
     document.querySelectorAll('.brand-name').forEach((b) => { b.textContent = t('app'); });
     document.title = t('app');
     applyDisplayPrefs();
@@ -1268,7 +1270,7 @@
     const biz = state.business;
     const name = p ? p.info.name || p.title : '';
     const who = collectorName(pay.collector_id);
-    const when = new Date(pay.paid_at).toLocaleString(state.lang === 'ar' ? 'ar-LB' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+    const when = new Date(pay.paid_at).toLocaleString(loc(), { dateStyle: 'medium', timeStyle: 'short' });
     const lines = [
       [t('date'), when], [t('customer'), name], [t('forMonth'), monthLabel(b.month)],
       [t('amountPaid'), payText(pay)], pay.change ? [t('changeGiven'), pay.change] : null, [t('method'), t(pay.method)],
@@ -1424,25 +1426,39 @@
     const upkeep = upkeepRows(hd.upkeep, biz);
     const load = loadInfo();
 
-    const genBtn = h('button', { type: 'button', class: 'btn primary small', onclick: async (e) => {
-      e.stopPropagation();
-      if (!tariff.data) return tariffSheet(null, viewHome);
-      busy(genBtn, true);
-      try {
-        const { data, error } = await sb.rpc('generate_bills', { p_business: biz.id, p_month: m });
-        if (error) throw error;
-        const notes = [t('generated', { n: data.created + data.updated })];
-        if (data.missing_reading) notes.push(t('missingReadings', { n: data.missing_reading }));
-        if (data.invalid_reading) notes.push(t('invalidReadings', { n: data.invalid_reading }));
-        toast(notes.join(sep()), data.missing_reading || data.invalid_reading ? 'warn' : 'good');
-        viewHome();
-      } catch (err) { fail(err); } finally { busy(genBtn, false); }
-    } }, bills.data.length ? t('updateBills') : t('createBills'));
+    const genBtn = h('button', { type: 'button', class: 'btn primary small', onclick: (e) => { e.stopPropagation(); if (!tariff.data) return tariffSheet(null, viewHome); makeBills(genBtn, viewHome); } }, bills.data.length ? t('updateBills') : t('createBills'));
 
     const step = (n, done, title, sub, action, onclick) => h('div', { class: `step ${done ? 'done' : ''}`, role: onclick ? 'button' : null, tabindex: onclick ? '0' : null, onclick },
       h('span', { class: 'step-n' }, done ? icon('check') : String(n)),
       h('div', { class: 'grow' }, h('strong', null, title), h('small', { class: 'muted' }, sub)),
       action || h('span', { class: 'chev flip' }, '›'));
+
+    const again = () => viewHome();
+    const noticeKind = hd.notice && hd.notice.kind && Date.now() - new Date(hd.notice.created_at).getTime() < 12 * 3600000 ? hd.notice.kind : null;
+    const unpaidPeople = new Set(unpaid.map((b) => b.subscriber_id)).size;
+    const readingsDone = metered.length > 0 && readCount === metered.length;
+    const alerts = [
+      outageCards(reqs, again),
+      requestCards(reqs, again),
+      ...upkeep.map((u) => h('button', { type: 'button', class: 'alert-row', onclick: () => (u.kind === 'oil' ? oilSheet(again) : go('costs')) },
+        h('span', { class: 'row-ic warn' }, icon('wrench')), h('div', { class: 'grow' }, h('strong', null, u.title), h('small', null, u.sub)), h('span', { class: 'chev flip' }, '›'))),
+      load.cap && load.pct >= 0.9 ? h('button', { type: 'button', class: 'alert-row', onclick: () => go('people') },
+        h('span', { class: `row-ic ${load.pct > 1 ? 'bad' : 'warn'}` }, icon('gauge')),
+        h('div', { class: 'grow' }, h('strong', null, load.pct > 1 ? t('loadOver') : t('loadNear')), h('small', null, t('loadLine', { used: load.used, cap: load.cap }))), h('span', { class: 'chev flip' }, '›')) : null,
+      state.payClaims.length ? h('section', { class: 'card flush', id: 'claims-card' },
+        h('h3', { class: 'card-title' }, t('claimsTitle'), h('span', { class: 'badge' }, state.payClaims.length)),
+        state.payClaims.map((c) => payClaimRow(c, again))) : null,
+      state.readClaims.length ? h('section', { class: 'card flush', id: 'rclaims-card' },
+        h('h3', { class: 'card-title' }, t('readClaimsTitle'), h('span', { class: 'badge' }, state.readClaims.length)),
+        state.readClaims.map((c) => readClaimRow(c, again))) : null,
+      pending.length ? h('section', { class: 'card flush' },
+        h('h3', { class: 'card-title' }, t('requests'), h('span', { class: 'badge' }, pending.length)),
+        pending.map((p) => h('div', { class: 'item', role: 'button', tabindex: '0', onclick: () => requestSheet(p, again) },
+          avatar(p.info.name), h('div', { class: 'grow' }, h('strong', null, p.info.name || '—'),
+            h('small', { class: 'muted' }, [ltr(p.info.phone), p.info.building].filter(Boolean).join(sep()))),
+          h('span', { class: 'pill partial' }, t('review'))))) : null
+    ].filter(Boolean);
+    const lateOpen = late.filter((x) => !x.p.cut_at).length;
 
     render(
       head(biz.name, monthSwitch(viewHome)),
@@ -1451,63 +1467,88 @@
         h('button', { type: 'button', class: 'btn primary block', onclick: () => personForm(null, () => go('people')) }, icon('plus'), t('addSubscriber')),
         h('button', { type: 'button', class: 'btn ghost block', onclick: importSheet }, t('importTitle')),
         h('button', { type: 'button', class: 'btn ghost block', onclick: () => go('invite') }, icon('send'), t('inviteAll'))) : null,
-      people.length ? pushCard(t('pushAskOwner')) : null,
       people.length ? todayCard({
         outages, subReqs: otherReqs,
         pending: pending.length, pendingList: pending, payClaims: state.payClaims.length, readClaims: state.readClaims.length,
         tariff: !!tariff.data, setPrices: () => tariffSheet(null, viewHome), missing: missingPeople.length, missingBuilding,
         bills: bills.data.length > 0, makeBills: () => genBtn.click(), unsent: unsent.length, send: () => sendQueue(unsent),
-        unpaid: unpaid.length, late: late.filter((x) => !x.p.cut_at).length
+        unpaid: unpaid.length, late: lateOpen,
+        cycle: [!!tariff.data, readingsDone || !metered.length, bills.data.length > 0, bills.data.length > 0 && !unpaid.length]
       }) : null,
-      people.length ? powerCard(hd.notice, () => viewHome()) : null,
-      h('div', { class: 'cols' },
-        h('div', { class: 'stack' },
-          h('section', { class: 'hero-card' },
-            h('small', null, t('collectedOf')),
-            h('div', { class: 'hero-num' }, money(paid), h('span', null, ` / ${money(billed)}`)),
-            bar,
-            h('div', { class: 'row between' }, h('span', null, t('unpaidCount', { n: unpaid.length })), h('strong', { class: 'amount' }, money(billed - paid))),
-            oldTotal > 0 ? h('button', { type: 'button', class: 'old-row', onclick: () => { state.billFilter = 'old'; go('bills'); } },
-              h('span', null, `${t('oldUnpaid')}${sep()}${t('oldUnpaidSubs', { n: oldSubs })}`), h('strong', { class: 'amount' }, money(oldTotal))) : null),
-          h('section', { class: 'card flush' },
-            h('h3', { class: 'card-title' }, t('thisMonth')),
-            step(1, !!tariff.data, t('stepPrice'), tariff.data ? t('priceSet', { kwh: ltr(money(tariff.data.kwh_price)), amp: ltr(money(tariff.data.flat_amp_price)) }) + (aboveOfficial ? `${sep()}${t('aboveOfficial')}` : '') : t('priceNotSet'), null, () => tariffSheet(tariff.data, viewHome)),
-            step(2, metered.length > 0 && readCount === metered.length, t('stepReadings'), (metered.length ? t('readingsCount', { n: readCount, total: metered.length }) : t('noMeteredShort')) + (waiting ? `${sep()}${t('draftsWaiting', { n: waiting })}` : ''), null, () => go('readings')),
-            step(3, bills.data.length > 0, t('stepBills'), bills.data.length ? t('billsMade', { n: bills.data.length }) : t('billsNotMade'), genBtn))),
-        h('div', { class: 'stack' },
-          outageCards(reqs, () => viewHome()),
-          requestCards(reqs, () => viewHome()),
-          upkeep.map((u) => h('button', { type: 'button', class: 'late-row card', onclick: () => (u.kind === 'oil' ? oilSheet(() => viewHome()) : go('costs')) },
-            h('span', { class: 'row-ic warn' }, icon('wrench')),
-            h('div', { class: 'grow' }, h('strong', null, u.title), h('small', { class: 'muted' }, u.sub)),
-            h('span', { class: 'chev flip' }, '›'))),
-          load.cap && load.pct >= 0.9 ? h('button', { type: 'button', class: 'late-row card', onclick: () => go('people') },
-            h('span', { class: `row-ic ${load.pct > 1 ? 'bad' : 'warn'}` }, icon('gauge')),
-            h('div', { class: 'grow' }, h('strong', null, load.pct > 1 ? t('loadOver') : t('loadNear')), h('small', { class: 'muted' }, t('loadLine', { used: load.used, cap: load.cap }))),
-            h('span', { class: 'chev flip' }, '›')) : null,
-          state.payClaims.length ? h('section', { class: 'card flush', id: 'claims-card' },
-            h('h3', { class: 'card-title' }, t('claimsTitle'), h('span', { class: 'badge' }, state.payClaims.length)),
-            state.payClaims.map((c) => payClaimRow(c, viewHome))) : null,
-          state.readClaims.length ? h('section', { class: 'card flush', id: 'rclaims-card' },
-            h('h3', { class: 'card-title' }, t('readClaimsTitle'), h('span', { class: 'badge' }, state.readClaims.length)),
-            state.readClaims.map((c) => readClaimRow(c, viewHome))) : null,
-          pending.length ? h('section', { class: 'card flush' },
-            h('h3', { class: 'card-title' }, t('requests'), h('span', { class: 'badge' }, pending.length)),
-            pending.map((p) => h('div', { class: 'item', role: 'button', tabindex: '0', onclick: () => requestSheet(p, viewHome) },
-              avatar(p.info.name), h('div', { class: 'grow' }, h('strong', null, p.info.name || '—'),
-                h('small', { class: 'muted' }, [ltr(p.info.phone), p.info.building].filter(Boolean).join(sep()))),
-              h('span', { class: 'pill partial' }, t('review'))))) : null,
-          late.length ? h('button', { type: 'button', class: 'late-row card', onclick: () => go('late') },
-            h('span', { class: 'row-ic bad' }, icon('bell')),
-            h('div', { class: 'grow' }, h('strong', null, t('lateTitle')), h('small', { class: 'muted' }, t('lateShort', { n: late.length }))),
-            h('span', { class: 'chev flip' }, '›')) : null,
-          h('section', { class: 'card flush' },
-            h('h3', { class: 'card-title' }, t('toCollect'), unpaid.length ? h('button', { type: 'button', class: 'link', onclick: () => go('round') }, t('round')) : null, unpaid.length > 6 ? h('button', { type: 'button', class: 'link', onclick: () => go('bills') }, t('seeAll')) : null),
-            unpaid.length ? unpaid.slice(0, 6).map((b) => billRow(b, viewHome))
-              : h('p', { class: 'muted pad' }, bills.data.length ? t('allPaid') : t('noBillsYet'))),
-          oldBills.length ? h('section', { class: 'card flush' },
-            h('h3', { class: 'card-title' }, t('oldUnpaid'), h('button', { type: 'button', class: 'link', onclick: () => { state.billFilter = 'old'; go('bills'); } }, t('seeAll'))),
-            oldBills.slice(0, 5).map((b) => billRow(b, viewHome))) : null)));
+      people.length ? h('section', { class: 'money-card' },
+        h('div', { class: 'dial-wrap' }, dial(billed > 0 ? paid / billed : 0),
+          h('div', { class: 'dial-text' }, h('small', null, t('mnCollected')), h('strong', { class: 'amount' }, money(paid)), h('span', null, t('mnOf', { total: ltr(money(billed)) })))),
+        h('div', { class: 'row between money-foot' },
+          unpaid.length ? h('span', null, t('mnLeft', { amt: ltr(money(billed - paid)), n: unpaidPeople })) : h('span', null, bills.data.length ? t('allPaid') : t('noBillsYet')),
+          unpaid.length ? h('button', { type: 'button', class: 'link', onclick: () => go('bills') }, t('mnSee')) : null),
+        oldTotal > 0 ? h('button', { type: 'button', class: 'money-old', onclick: () => { state.billFilter = 'old'; go('bills'); } },
+          h('span', null, t('mnOld', { n: oldSubs })), h('strong', { class: 'amount' }, money(oldTotal))) : null) : null,
+      alerts.length ? h('h3', { class: 'section-title' }, t('needsYou')) : null,
+      alerts.length ? h('div', { class: 'stack' }, alerts) : null,
+      people.length ? h('h3', { class: 'section-title' }, t('everything')) : null,
+      people.length ? h('div', { class: 'tiles' },
+        tile(t('tlReadings'), 'camera', () => go('readings'), metered.length ? t('tlReadingsSub', { n: readCount, total: metered.length }) : t('noMeteredShort'), readingsDone ? 'ok' : ''),
+        tile(t('tlCollect'), 'cash', () => go('round'), unpaid.length ? t('tlCollectSub', { n: unpaidPeople }) : t('tlNothing'), '', null),
+        tile(t('pwTitle'), 'power', () => powerSheet(hd.notice, again), noticeKind === 'off' ? t('tlOff') : noticeKind === 'maint' ? t('pwMaint') : t('tlOn'), noticeKind === 'off' ? 'bad' : noticeKind === 'maint' ? 'warn' : 'on'),
+        tile(t('tlLate'), 'bell', () => go('late'), lateOpen ? t('tlLateSub', { n: lateOpen }) : t('tlNothing'), lateOpen ? 'warn' : '', lateOpen || null),
+        tile(t('stepPrice'), 'tag', () => tariffSheet(tariff.data, viewHome), tariff.data ? (aboveOfficial ? t('aboveOfficial') : t('tlPriceSub', { kwh: ltr(money(tariff.data.kwh_price)) })) : t('priceNotSet'), aboveOfficial || !tariff.data ? 'warn' : ''),
+        tile(t('costsTitle'), 'wrench', () => go('costs'), t('tlCostsSub'))) : null,
+      unpaid.length ? h('section', { class: 'card flush' },
+        h('h3', { class: 'card-title' }, t('toCollect'), unpaid.length > 6 ? h('button', { type: 'button', class: 'link', onclick: () => go('bills') }, t('seeAll')) : null),
+        unpaid.slice(0, 6).map((b) => billRow(b, viewHome))) : null,
+      h('span', { hidden: true }, genBtn));
+  }
+
+  function dial(pct) {
+    const ns = 'http://www.w3.org/2000/svg';
+    const el = (tag, attrs) => { const e = document.createElementNS(ns, tag); for (const k of Object.keys(attrs)) e.setAttribute(k, attrs[k]); return e; };
+    const p = Math.max(0, Math.min(1, pct || 0));
+    const cx = 120; const cy = 118; const r = 96;
+    const pt = (a, rr) => [cx - (rr || r) * Math.cos(Math.PI * a), cy - (rr || r) * Math.sin(Math.PI * a)];
+    const arc = (a0, a1) => { const [x0, y0] = pt(a0); const [x1, y1] = pt(a1); return `M${x0.toFixed(2)} ${y0.toFixed(2)} A${r} ${r} 0 0 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`; };
+    const svg = el('svg', { viewBox: '0 0 240 130', class: 'dial', role: 'img', 'aria-label': `${Math.round(p * 100)}%` });
+    const id = `dg${Math.random().toString(36).slice(2, 8)}`;
+    const defs = el('defs', {});
+    const g = el('linearGradient', { id, x1: '0', y1: '0', x2: '1', y2: '0' });
+    g.append(el('stop', { offset: '0', 'stop-color': '#ff9f0a' }), el('stop', { offset: '1', 'stop-color': '#ffd166' }));
+    defs.append(g);
+    svg.append(defs);
+    for (let i = 0; i <= 20; i++) {
+      const a = i / 20; const major = i % 5 === 0;
+      const [x0, y0] = pt(a, r - 18); const [x1, y1] = pt(a, r - (major ? 30 : 24));
+      svg.append(el('line', { x1: x0.toFixed(2), y1: y0.toFixed(2), x2: x1.toFixed(2), y2: y1.toFixed(2), class: `dial-tick ${major ? 'major' : ''} ${a <= p + 0.001 && p > 0 ? 'lit' : ''}` }));
+    }
+    svg.append(el('path', { d: arc(0, 1), class: 'dial-track' }));
+    if (p > 0) svg.append(el('path', { d: arc(0, Math.max(p, 0.012)), class: 'dial-fill', stroke: `url(#${id})` }));
+    const [nx, ny] = pt(p, r - 44);
+    svg.append(el('line', { x1: cx, y1: cy, x2: nx.toFixed(2), y2: ny.toFixed(2), class: 'dial-needle' }), el('circle', { cx, cy, r: 6, class: 'dial-hub' }));
+    return svg;
+  }
+
+  function tile(label, ic, onclick, sub, cls, badge) {
+    return h('button', { type: 'button', class: `tile ${cls || ''}`, onclick },
+      h('span', { class: 'tile-ic' }, icon(ic)), h('strong', null, label), sub ? h('small', null, sub) : null, badge ? h('span', { class: 'badge' }, badge) : null);
+  }
+
+  async function makeBills(btn, after) {
+    busy(btn, true);
+    try {
+      const { data, error } = await sb.rpc('generate_bills', { p_business: state.business.id, p_month: monthDate(state.month) });
+      if (error) throw error;
+      const notes = [t('generated', { n: data.created + data.updated })];
+      if (data.missing_reading) notes.push(t('missingReadings', { n: data.missing_reading }));
+      if (data.invalid_reading) notes.push(t('invalidReadings', { n: data.invalid_reading }));
+      toast(notes.join(sep()), data.missing_reading || data.invalid_reading ? 'warn' : 'good');
+      after();
+    } catch (err) {
+      if (/tariff_missing/.test((err && err.message) || '')) toast(t('tariffMissing'), 'warn'); else fail(err);
+    } finally { busy(btn, false); }
+  }
+
+  function powerSheet(last, after) {
+    let close = () => {};
+    const done = () => { close(); after(); };
+    close = sheet(t('pwTitle'), h('div', { class: 'stack' }, powerCard(last && last.kind ? last : null, done, true)));
   }
 
   function tariffSheet(current, after) {
@@ -2030,7 +2071,10 @@
     }).catch(fail), 250); });
     const count = (s) => (s === 'old' ? oldBills.length : data.filter((b) => s === 'all' || b.status === s).length);
     const toSend = list.filter((b) => owed(b) > 0);
+    const upd = h('button', { type: 'button', class: `btn small upd-bills ${data.length ? 'ghost' : 'primary'}` }, data.length ? t('updateBills') : t('createBills'));
+    upd.addEventListener('click', () => makeBills(upd, again));
     render(head(t('tabBills'), monthSwitch(again)),
+      upd,
       data.length || oldBills.length ? search : null,
       h('div', { class: 'chips' }, ['all', 'unpaid', 'partial', 'paid', 'old'].map((f) => h('button', {
         type: 'button', class: `${f === status ? 'chip on' : 'chip'}${f === 'old' && oldBills.length ? ' alert' : ''}`, onclick: () => viewBills(f, query).catch(fail)
@@ -2178,7 +2222,7 @@
     render(head(state.business.name, h('button', { type: 'button', class: 'icon-btn', onclick: again, 'aria-label': t('refresh') }, '↻')),
       h('section', { class: 'hero-card' }, h('small', null, t('toCollect')), h('div', { class: 'hero-num' }, money(total)),
         h('div', { class: 'row between' }, h('span', null, t('unpaidCount', { n: state.openBills.length })), h('span', null, state.role.name))),
-      state.openBills.length ? h('button', { type: 'button', class: 'btn primary block', onclick: () => go('round') }, icon('people'), t('roundStart')) : null,
+      state.openBills.length ? h('button', { type: 'button', class: 'btn primary block action-btn', onclick: () => go('round') }, icon('people'), t('roundStart')) : null,
       search,
       list.length ? h('div', { class: 'card flush grid-list' }, list.map((b) => billRow(b, again))) : empty(q ? t('noResults') : t('allPaid')));
   }
@@ -2206,7 +2250,7 @@
       pays.length ? h('div', { class: 'card flush' }, pays.map((x) => h('div', { class: 'item static' },
         avatar(personName(x.bills && x.bills.subscriber_id)),
         h('div', { class: 'grow' }, h('strong', null, personName(x.bills && x.bills.subscriber_id)),
-          h('small', { class: 'muted' }, [x.bills ? monthLabel(x.bills.month) : '', t(x.method), new Date(x.paid_at).toLocaleTimeString(state.lang === 'ar' ? 'ar-LB' : 'en-GB', { hour: '2-digit', minute: '2-digit' })].filter(Boolean).join(sep()))),
+          h('small', { class: 'muted' }, [x.bills ? monthLabel(x.bills.month) : '', t(x.method), new Date(x.paid_at).toLocaleTimeString(loc(), { hour: '2-digit', minute: '2-digit' })].filter(Boolean).join(sep()))),
         h('div', { class: 'end-col' }, h('strong', { class: 'amount' }, payText(x)),
           h('button', { type: 'button', class: 'link bad', onclick: () => removePayment(x, () => viewToday().catch(fail)) }, t('undo'))))))
         : empty(t('nothingToday')));
@@ -2414,23 +2458,31 @@
           notice ? h('section', { class: `power-banner ${notice.kind || 'info'}` }, h('span', { class: 'row-ic' }, icon(notice.kind === 'on' ? 'bolt' : notice.kind === 'maint' ? 'wrench' : notice.kind === 'off' ? 'power' : 'bell')),
             h('div', { class: 'grow' }, h('strong', null, notice.kind ? powerText(notice.kind, notice.meta) : notice.title),
               h('small', null, [biz.name, `${dateLabel(notice.created_at)} ${timeLabel(notice.created_at)}`, notice.kind ? null : notice.body].filter(Boolean).join(sep())))) : null,
-          h('section', { class: `hero-card ${due > 0 ? '' : 'clear'}` },
-            h('small', null, biz.name),
-            h('div', { class: 'hero-num' }, money(due)),
-            h('div', { class: 'row between' },
-              h('span', null, due > 0 ? `≈ ${lbp(due, biz.lbp_rate)} ${t('lbpUnit')}` : t('nothingDue')),
-              h('span', null, `${s.amps}A${sep()}${typeLabel(s.billing_type)}`)),
+          h('section', { class: `bill-hero ${due > 0 ? '' : 'clear'}` },
+            h('small', { class: 'bh-biz' }, biz.name),
+            h('span', { class: 'bh-label' }, due > 0 ? t('youOwe') : t('nothingDue')),
+            due > 0 ? h('div', { class: 'hero-num' }, money(due)) : h('div', { class: 'bh-ok' }, icon('check')),
+            due > 0 ? h('span', { class: 'bh-sub' }, `≈ ${lbp(due, biz.lbp_rate)} ${t('lbpUnit')}`) : null,
             oldDue > 0 ? h('div', { class: 'old-row' }, h('span', null, t('includesOld', { amt: ltr(money(oldDue)) }))) : null,
             s.cut_at ? h('div', { class: 'old-row' }, h('strong', null, t('youAreCut'))) : null,
+            (() => {
+              const open = mine.filter((b) => Number(b.amount) > Number(b.paid_amount));
+              const b0 = open[open.length - 1];
+              if (!b0) return null;
+              if (claimOf.has(b0.id)) return h('div', { class: 'old-row' }, h('span', null, t('claimWaitingShort')));
+              return h('button', { type: 'button', class: 'btn primary block', onclick: () => claimSheet(s, b0, again) }, icon('cash'), t('iPaid'));
+            })(),
             s.billing_type === 'metered' ? (() => {
               const rcl = readOf.get(s.id);
               if (rcl && rcl.status === 'pending') return h('div', { class: 'old-row' }, h('span', null, t('readingWaiting', { v: Number(rcl.value) })));
               if (rcl && rcl.status === 'accepted') return h('div', { class: 'old-row' }, h('span', null, t('readingAccepted', { v: Number(rcl.value) })));
-              return h('button', { type: 'button', class: 'btn glass block', onclick: () => readingSheet(s, again, hint) }, icon('camera'), t('sendReading'));
+              return null;
             })() : null,
-            subRequestLines(reqs),
-            h('button', { type: 'button', class: 'btn glass block', onclick: () => subRequestSheet(s, again) }, icon('chat'), t('rqAsk')),
-            biz.phone ? h('a', { class: 'btn glass block', href: `tel:+${intlPhone(biz.phone)}` }, icon('phone'), t('callOwner')) : null),
+            subRequestLines(reqs)),
+          h('div', { class: 'tiles three' },
+            s.billing_type === 'metered' && !(readOf.get(s.id) && ['pending', 'accepted'].includes(readOf.get(s.id).status)) ? tile(t('tlSendReading'), 'camera', () => readingSheet(s, again, hint), t('tlSendReadingSub')) : null,
+            tile(t('tlProblem'), 'power', () => subRequestSheet(s, again), t('tlProblemSub'), 'alert'),
+            biz.phone ? h('a', { class: 'tile', href: `tel:+${intlPhone(biz.phone)}` }, h('span', { class: 'tile-ic' }, icon('phone')), h('strong', null, t('tlCall')), h('small', { dir: 'ltr' }, biz.phone)) : null),
           usageChart(mine),
           h('section', { class: 'card flush' },
             h('h3', { class: 'card-title' }, t('history')),
@@ -2863,7 +2915,7 @@
     return t('pwMaintMsg', { from: (meta && meta.from) || '…', to: (meta && meta.to) || '…' });
   }
 
-  function timeLabel(d) { return new Date(d).toLocaleTimeString(state.lang === 'ar' ? 'ar-LB' : 'en-GB', { hour: '2-digit', minute: '2-digit' }); }
+  function timeLabel(d) { return new Date(d).toLocaleTimeString(loc(), { hour: '2-digit', minute: '2-digit' }); }
 
   function noAppPeople() { return state.people.filter((p) => p.active && p.status !== 'pending' && !p.cut_at && p.info.phone && !(p.devices > 0)); }
 
@@ -2897,7 +2949,7 @@
       save));
   }
 
-  function powerCard(last, after) {
+  function powerCard(last, after, bare) {
     const fire = (kind) => async (e) => {
       const btn = e.currentTarget;
       busy(btn, true);
@@ -2906,9 +2958,9 @@
     const recent = last && last.kind && Date.now() - new Date(last.created_at).getTime() < 6 * 3600000 ? last : null;
     const off = recent && recent.kind === 'off';
     const noApp = recent ? noAppPeople() : [];
-    return h('section', { class: `card power-card ${off ? 'off' : ''}` },
+    return h('section', { class: bare ? 'power-card bare' : `card power-card ${off ? 'off' : ''}` },
       h('div', { class: 'row between' },
-        h('div', { class: 'grow' }, h('strong', null, t('pwTitle')),
+        h('div', { class: 'grow' }, bare ? null : h('strong', null, t('pwTitle')),
           h('small', { class: 'muted' }, recent ? `${powerText(recent.kind, recent.meta).replace(/[.。]$/, '')}${sep()}${timeLabel(recent.created_at)}` : t('genHint')))),
       h('div', { class: 'power-btns' },
         off ? null : h('button', { type: 'button', class: 'btn ghost small', onclick: fire('off') }, icon('power'), t('pwOff')),
@@ -3815,23 +3867,34 @@
   }
 
   function todayCard(x) {
-    const go2 = (label, fn, sub) => ({ label, fn, sub });
-    let a = null;
-    if (x.outages) a = go2(t('todayOutage', { n: x.outages }), () => document.getElementById('outage-card')?.scrollIntoView({ behavior: 'smooth' }));
-    else if (x.subReqs) a = go2(t('todayReqs', { n: x.subReqs }), () => document.getElementById('subreq-card')?.scrollIntoView({ behavior: 'smooth' }));
-    else if (x.pending) a = go2(t('todayJoin', { n: x.pending }), () => requestSheet(x.pendingList[0], viewHome));
-    else if (x.payClaims) a = go2(t('todayClaims', { n: x.payClaims }), () => document.getElementById('claims-card')?.scrollIntoView({ behavior: 'smooth' }));
-    else if (x.readClaims) a = go2(t('todayReadClaims', { n: x.readClaims }), () => document.getElementById('rclaims-card')?.scrollIntoView({ behavior: 'smooth' }));
-    else if (!x.tariff) a = go2(t('todayPrices'), x.setPrices);
-    else if (x.missing) a = go2(t('todayReadings', { n: x.missing }), () => go('readings'), x.missingBuilding ? t('todayStartAt', { b: x.missingBuilding }) : null);
-    else if (!x.bills) a = go2(t('todayBills'), x.makeBills);
-    else if (x.unsent) a = go2(t('todaySend', { n: x.unsent }), x.send);
-    else if (x.unpaid) a = go2(t('todayCollect', { n: x.unpaid }), () => go('round'));
-    else if (x.late) a = go2(t('todayLate', { n: x.late }), () => go('late'));
-    if (!a) return h('section', { class: 'today done' }, h('span', { class: 'row-ic' }, icon('check')), h('div', { class: 'grow' }, h('strong', null, t('todayDone')), h('small', { class: 'muted' }, t('todayDoneSub'))));
-    return h('section', { class: 'today' },
-      h('div', { class: 'grow' }, h('small', { class: 'muted' }, t('todayNext')), h('strong', null, a.label), a.sub ? h('small', { class: 'muted' }, a.sub) : null),
-      h('button', { type: 'button', class: 'btn primary small', onclick: a.fn }, t('todayGo')));
+    const scroll = (id) => () => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const pick = [
+      [x.outages, 'power', t('todayOutage', { n: x.outages }), t('acOutageSub'), t('acSee'), scroll('outage-card'), 'bad'],
+      [x.subReqs, 'chat', t('todayReqs', { n: x.subReqs }), null, t('acSee'), scroll('subreq-card')],
+      [x.pending, 'people', t('todayJoin', { n: x.pending }), null, t('acSee'), () => requestSheet(x.pendingList[0], viewHome)],
+      [x.payClaims, 'cash', t('todayClaims', { n: x.payClaims }), null, t('acSee'), scroll('claims-card')],
+      [x.readClaims, 'camera', t('todayReadClaims', { n: x.readClaims }), null, t('acSee'), scroll('rclaims-card')],
+      [!x.tariff, 'tag', t('todayPrices'), t('acPricesSub'), t('acPrices'), x.setPrices],
+      [x.missing, 'camera', t('todayReadings', { n: x.missing }), x.missingBuilding ? t('todayStartAt', { b: x.missingBuilding }) : t('acReadingsSub'), t('acReadings'), () => go('readings')],
+      [!x.bills, 'bills', t('todayBills'), t('acBillsSub'), t('acBills'), x.makeBills],
+      [x.unsent, 'chat', t('todaySend', { n: x.unsent }), t('acSendSub'), t('acSend'), x.send, 'wa'],
+      [x.unpaid, 'cash', t('todayCollect', { n: x.unpaid }), t('acCollectSub'), t('acCollect'), () => go('round')],
+      [x.late, 'bell', t('todayLate', { n: x.late }), t('acLateSub'), t('acSee'), () => go('late')]
+    ].find((a) => a[0]);
+    const steps = [t('cyPrices'), t('cyReadings'), t('cyBills'), t('cyCollect')];
+    const cyc = x.cycle || [];
+    const cur = cyc.findIndex((v) => !v);
+    const cycle = h('ol', { class: 'cycle', 'aria-label': t('cyTitle') }, steps.map((label, i) => h('li', { class: cyc[i] ? 'done' : i === cur ? 'now' : '' },
+      h('span', { class: 'cy-dot' }, cyc[i] ? icon('check') : String(i + 1)), h('small', null, label))));
+    if (!pick) return h('section', { class: 'action done' }, h('div', { class: 'action-top' }, h('span', { class: 'action-ic' }, icon('check')),
+      h('div', { class: 'grow' }, h('strong', null, t('todayDone')), h('small', null, t('todayDoneSub')))), cycle);
+    const [, ic, title, sub, btn, fn, tone] = pick;
+    return h('section', { class: `action ${tone || ''}` },
+      h('small', { class: 'action-kicker' }, t('todayNext')),
+      h('div', { class: 'action-top' }, h('span', { class: 'action-ic' }, icon(ic)),
+        h('div', { class: 'grow' }, h('strong', null, title), sub ? h('small', null, sub) : null)),
+      h('button', { type: 'button', class: `btn block ${tone === 'wa' ? 'wa' : 'primary'} action-btn`, onclick: fn }, btn),
+      cycle);
   }
 
   function usageChart(bills) {
@@ -3842,7 +3905,7 @@
     const max = Math.max(...list.map(val), 1);
     const last3 = bills.slice(0, 3).map((b) => Number(b.amount));
     const est = last3.reduce((a, v) => a + v, 0) / last3.length;
-    const short = (d) => { const [y, mo] = String(d).slice(0, 7).split('-').map(Number); return new Date(y, mo - 1, 1).toLocaleDateString(state.lang === 'ar' ? 'ar-LB' : 'en-GB', { month: 'short' }); };
+    const short = (d) => { const [y, mo] = String(d).slice(0, 7).split('-').map(Number); return new Date(y, mo - 1, 1).toLocaleDateString(loc(), { month: 'short' }); };
     return h('section', { class: 'card stack' },
       h('div', { class: 'row between' }, h('h3', null, metered ? t('usageKwh') : t('usageAmount')), h('small', { class: 'muted' }, t('lastMonths', { n: list.length }))),
       h('div', { class: 'bars', role: 'img', 'aria-label': list.map((b) => `${monthLabel(b.month)}: ${val(b)}`).join(', ') },
@@ -4097,7 +4160,7 @@
     const { data, error } = await q;
     if (error) throw error;
     const again = () => viewLogs(level).catch(fail);
-    const when = (d) => new Date(d).toLocaleString(state.lang === 'ar' ? 'ar-LB' : 'en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const when = (d) => new Date(d).toLocaleString(loc(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
     render(head(t('appLogs'), h('button', { type: 'button', class: 'icon-btn', onclick: again, 'aria-label': t('refresh') }, '↻'), 'more'),
       h('p', { class: 'muted' }, t('appLogsBody')),
       h('div', { class: 'chips' }, ['all', 'report', 'error'].map((f) => h('button', { type: 'button', class: f === level ? 'chip on' : 'chip', onclick: () => viewLogs(f).catch(fail) }, t(`log_${f}`)))),
